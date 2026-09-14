@@ -1,42 +1,39 @@
-# AnyTLS Tunnel v1.1.0
+# AnyTLS Tunnel v1.2.0
 
-GitHub-first deployment. No file transfer between Iran and foreign servers is required.
+Three-node censorship-resilient tunnel:
 
-## Roles
+- Foreign A: AnyTLS + ShadowTLS v3 on TCP/443
+- Foreign B: AnyTLS + ResTLS on TCP/443
+- Iran: VLESS/REALITY user ingress + Mihomo sticky load-balance/failover
 
-- `foreign-a`: AnyTLS + ShadowTLS v3 on TCP/443
-- `foreign-b`: AnyTLS + ResTLS on TCP/443
-- `iran`: local Mihomo load-balancer with health-check and sticky sessions
+## User traffic path
 
-## Install on every VPS
+`VLESS/REALITY user -> Iran Mihomo -> TUNNEL group -> Foreign A or Foreign B -> Internet`
 
-```bash
-sudo rm -rf /opt/anytls-tunnel
-sudo git clone --depth 1 --branch anytls-v1.1.0 https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/anytls-tunnel
-cd /opt/anytls-tunnel
-sudo bash setup.sh
-```
+No Xray-to-SOCKS middle layer is required. The Iran node can reuse an existing VLESS UUID, REALITY private key, SNI and short-id so existing user URIs remain unchanged, provided the hostname resolves to the new Iran server and the private key matches the public key already present in users' URIs.
 
-Install in this order: Foreign A, Foreign B, then Iran.
+## YouTube / QUIC safe mode
 
-On each foreign server, pressing Enter at the password prompts generates strong local secrets. Save the values printed at the end. When installing the Iran role, paste the four secrets and the two foreign IPs/cover hostnames. No env file or secret file needs to move between machines.
+The Iran setup asks whether to enable QUIC-safe mode. Default is yes. It rejects proxied UDP/443 so browsers and video apps fall back to HTTPS over TCP instead of carrying QUIC inside AnyTLS UDP-over-TCP. Other UDP is still allowed.
 
-Secrets are stored locally under `/root/anytls-*.env` with mode `0600` and copied into `/etc/anytls-tunnel/deploy.env`. They are not stored in GitHub.
+## Installation
 
-## Verify on Iran
+Clone branch `anytls-v1.2.0` on each server and run one role:
 
 ```bash
-sudo anytls-tunnel-status
-sudo anytls-tunnel-health
-sudo anytls-tunnel-probe-test
+sudo bash setup.sh foreign-a
+sudo bash setup.sh foreign-b
+sudo bash setup.sh iran
 ```
 
-The Iran mixed proxy is bound to `127.0.0.1:7890` by default and should not be exposed publicly.
+Foreign roles generate their own secrets locally. Copy only the displayed text values into the Iran setup. No files need to be transferred between servers.
 
-## Rollback
+## Safety
 
-```bash
-sudo anytls-tunnel-rollback
-```
-
-The core is pinned to Mihomo v1.19.30 and the installer verifies the expected release SHA-256 before activation. Candidate configs are checked with `mihomo -t` before restart.
+- Mihomo pinned to v1.19.30 and SHA-256 verified.
+- Candidate config validated with `mihomo -t` before activation.
+- systemd auto-restart.
+- Backup/rollback support.
+- Controller and local mixed proxy bind only to 127.0.0.1.
+- Secrets saved mode 0600.
+- Health check uses `https://www.gstatic.com/generate_204`, expected HTTP 204.

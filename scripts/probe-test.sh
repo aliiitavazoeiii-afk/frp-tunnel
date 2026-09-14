@@ -30,7 +30,31 @@ probe(){
   trap - RETURN
 }
 
+probe_local_reality(){
+  local host=$1 port=$2 tmp
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
+  echo "=== iran / VLESS REALITY unauthenticated probe 127.0.0.1:${port} SNI=${host} ==="
+  if ! timeout 12 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" -tls1_3 -showcerts </dev/null >"$tmp" 2>/dev/null; then
+    echo "FAIL: local REALITY fallback probe could not complete"
+    return 1
+  fi
+  if ! openssl x509 -in "$tmp" -noout -subject -issuer -dates; then
+    echo "FAIL: local REALITY fallback returned no leaf certificate"
+    return 1
+  fi
+  if openssl x509 -in "$tmp" -noout -checkhost "$host" >/dev/null 2>&1; then
+    echo "PASS: Iran REALITY fallback certificate matches $host"
+  else
+    echo "FAIL: Iran REALITY fallback certificate does not match $host"
+    return 1
+  fi
+  rm -f "$tmp"
+  trap - RETURN
+}
+
 rc=0
+probe_local_reality "$VLESS_REALITY_SNI" "$USER_LISTEN_PORT" || rc=1
 probe "$NODE_A_ADDR" "$COVER_HOST_A" "foreign-a / ShadowTLS v3" || rc=1
 probe "$NODE_B_ADDR" "$COVER_HOST_B" "foreign-b / ResTLS" || rc=1
 exit "$rc"

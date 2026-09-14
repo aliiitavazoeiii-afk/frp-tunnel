@@ -12,8 +12,9 @@ check_node(){
   local name=$1
   printf '%-24s ' "$name"
   if out=$(curl -fsS --max-time 8 "${AUTH[@]}" -G \
-      --data-urlencode 'url=https://cp.cloudflare.com/' \
+      --data-urlencode 'url=https://www.gstatic.com/generate_204' \
       --data-urlencode 'timeout=5000' \
+      --data-urlencode 'expected=204' \
       "$BASE/proxies/$name/delay" 2>&1); then
     echo "OK $out"
   else
