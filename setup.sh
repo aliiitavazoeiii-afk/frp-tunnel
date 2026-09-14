@@ -20,9 +20,6 @@ rand_secret(){ openssl rand -hex 32; }
 valid_host(){ [[ "$1" =~ ^[A-Za-z0-9.-]+$ && "$1" != *:* && "$1" == *.* ]]; }
 valid_addr(){ [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]]; }
 valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && (( 1 <= 10#$1 && 10#$1 <= 65535 )); }
-valid_uuid(){ [[ "$1" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$ ]]; }
-valid_short_id(){ [[ "$1" =~ ^([0-9A-Fa-f]{2}){1,8}$ ]]; }
-valid_reality_key(){ [[ "$1" =~ ^[A-Za-z0-9_-]{40,64}$ ]]; }
 
 prompt_nonempty(){
   local var=$1 label=$2 val
@@ -85,37 +82,6 @@ prompt_required_secret(){
   printf -v "$var" '%s' "$val"
 }
 
-prompt_uuid(){
-  local var=$1 label=$2 val
-  while :; do
-    read -r -p "$label: " val
-    valid_uuid "$val" && break
-    echo "Invalid UUID."
-  done
-  printf -v "$var" '%s' "$val"
-}
-
-prompt_short_id(){
-  local var=$1 label=$2 val
-  while :; do
-    read -r -p "$label: " val
-    valid_short_id "$val" && break
-    echo "Short ID must be 2-16 hex characters with even length (example: ab)."
-  done
-  printf -v "$var" '%s' "$val"
-}
-
-prompt_reality_key(){
-  local var=$1 label=$2 val
-  while :; do
-    read -r -s -p "$label: " val
-    echo
-    valid_reality_key "$val" && break
-    echo "Reality private key format looks invalid."
-  done
-  printf -v "$var" '%s' "$val"
-}
-
 prompt_bool(){
   local var=$1 label=$2 default=$3 val
   read -r -p "$label [$default]: " val
@@ -141,12 +107,12 @@ write_env(){
 }
 
 cat <<'BANNER'
-AnyTLS Tunnel interactive setup v1.2.0
+AnyTLS Tunnel interactive setup v1.3.0
 
 Roles:
   1) foreign-a  = AnyTLS + ShadowTLS v3
   2) foreign-b  = AnyTLS + ResTLS
-  3) iran       = VLESS/REALITY ingress + load-balancer / failover gateway
+  3) iran       = x-ui/Xray backend load-balancer / failover gateway
 BANNER
 
 ROLE=${1:-}
@@ -213,14 +179,9 @@ EOF2
     prompt_required_secret ANYTLS_PASS_B "Paste ANYTLS_PASS_B"
     prompt_required_secret RESTLS_PASS_B "Paste RESTLS_PASS_B"
     echo
-    echo "=== USER VLESS/REALITY INGRESS ==="
-    prompt_uuid VLESS_UUID "Existing VLESS UUID"
-    prompt_reality_key REALITY_PRIVATE_KEY "Existing REALITY private key (must match users' pbk)"
-    prompt_host VLESS_REALITY_SNI "Existing REALITY SNI/server name (example: swscan.apple.com)"
-    prompt_short_id REALITY_SHORT_ID "Existing REALITY short-id (example: ab)"
-    prompt_port USER_LISTEN_PORT "Public VLESS/REALITY listen port" 443
+    echo "=== X-UI / XRAY BACKEND ==="
     prompt_bool QUIC_SAFE_MODE "Enable QUIC-safe mode (reject proxied UDP/443 so browsers/YouTube fall back to TCP)" yes
-    prompt_port LOCAL_MIXED_PORT "Local mixed proxy port" 7890
+    prompt_port LOCAL_SOCKS_PORT "Local SOCKS5 backend port for Xray" 7890
     prompt_port LOCAL_CONTROLLER_PORT "Local controller port" 9090
     CONTROLLER_SECRET=$(rand_secret)
     ENV_FILE=/root/anytls-iran.env
@@ -233,24 +194,19 @@ EOF2
       SHADOWTLS_PASS_A "$SHADOWTLS_PASS_A" \
       ANYTLS_PASS_B "$ANYTLS_PASS_B" \
       RESTLS_PASS_B "$RESTLS_PASS_B" \
-      VLESS_UUID "$VLESS_UUID" \
-      REALITY_PRIVATE_KEY "$REALITY_PRIVATE_KEY" \
-      VLESS_REALITY_SNI "$VLESS_REALITY_SNI" \
-      REALITY_SHORT_ID "$REALITY_SHORT_ID" \
-      USER_LISTEN_PORT "$USER_LISTEN_PORT" \
       QUIC_SAFE_MODE "$QUIC_SAFE_MODE" \
       CONTROLLER_SECRET "$CONTROLLER_SECRET" \
-      LOCAL_MIXED_PORT "$LOCAL_MIXED_PORT" \
+      LOCAL_SOCKS_PORT "$LOCAL_SOCKS_PORT" \
       LOCAL_CONTROLLER_PORT "$LOCAL_CONTROLLER_PORT"
     bash "$INSTALLER" iran "$ENV_FILE"
     cat <<EOF2
 
-Iran role installed.
-User ingress:     0.0.0.0:$USER_LISTEN_PORT (VLESS/REALITY TCP)
-Local proxy:      127.0.0.1:$LOCAL_MIXED_PORT
-QUIC safe mode:   $QUIC_SAFE_MODE
-Local controller: 127.0.0.1:$LOCAL_CONTROLLER_PORT
-Config/secrets:   $ENV_FILE (mode 600)
+Iran backend installed.
+x-ui/Xray keeps the public VLESS/REALITY listener (normally TCP/443).
+Xray SOCKS backend: 127.0.0.1:$LOCAL_SOCKS_PORT
+QUIC safe mode:      $QUIC_SAFE_MODE
+Local controller:    127.0.0.1:$LOCAL_CONTROLLER_PORT
+Config/secrets:      $ENV_FILE (mode 600)
 
 Run now:
   sudo anytls-tunnel-status
