@@ -16,10 +16,11 @@ esac
 [[ -f "$BASE_DIR/setup.sh" ]] || die "setup.sh missing"
 [[ -f "$BASE_DIR/upgrade-xudp-v3.sh" ]] || die "upgrade-xudp-v3.sh missing"
 [[ -f "$BASE_DIR/replace-node.sh" ]] || die "replace-node.sh missing"
+[[ -f "$BASE_DIR/repair-xui-anytls.sh" ]] || die "repair-xui-anytls.sh missing"
 
 cat <<EOF
 ============================================================
-AnyTLS Tunnel FINAL installer v1.5.0
+AnyTLS Tunnel FINAL installer v1.5.1
 Role: $ROLE
 Base AnyTLS + automatic XUDP compatibility layer
 ============================================================
@@ -29,14 +30,33 @@ EOF
 bash "$BASE_DIR/setup.sh" "$ROLE"
 
 # The proven Google/YouTube/NPV compatibility fix is mandatory in final mode.
-bash "$BASE_DIR/upgrade-xudp-v3.sh" "$ROLE"
+# Older/fresh x-ui installations may not yet contain an anytls-tunnel outbound.
+# In that specific case upgrade-xudp-v3 can finish the carrier/XUDP tests but
+# fail while patching x-ui. The bootstrap repair is designed to be fail-closed:
+# it re-tests XUDP, discovers the actual public :443 inbound tag from runtime,
+# backs up x-ui.db, creates/updates the outbound + route, and validates runtime.
+if [[ "$ROLE" == "iran" ]]; then
+  set +e
+  bash "$BASE_DIR/upgrade-xudp-v3.sh" iran
+  xudp_rc=$?
+  set -e
+  if (( xudp_rc != 0 )); then
+    log "XUDP upgrade returned rc=${xudp_rc}; checking fresh-x-ui bootstrap path"
+    bash "$BASE_DIR/repair-xui-anytls.sh"
+  fi
+else
+  bash "$BASE_DIR/upgrade-xudp-v3.sh" "$ROLE"
+fi
 
 if [[ "$ROLE" == "iran" ]]; then
   install -m 0755 "$BASE_DIR/replace-node.sh" /usr/local/sbin/anytls-replace
+  install -m 0755 "$BASE_DIR/repair-xui-anytls.sh" /usr/local/sbin/anytls-repair-xui
   log "Installed safe replacement command: sudo anytls-replace"
+  log "Installed x-ui bootstrap/repair command: sudo anytls-repair-xui"
   log "Verifying final Iran services"
   systemctl is-active --quiet anytls-tunnel || die "anytls-tunnel inactive"
   systemctl is-active --quiet anytls-xudp-bridge || die "anytls-xudp-bridge inactive"
+  systemctl is-active --quiet x-ui || die "x-ui inactive"
   ss -H -ltn 'sport = :7890' | grep -q . || die "Mihomo SOCKS 7890 missing"
   ss -H -ltn 'sport = :7891' | grep -q . || die "XUDP SOCKS 7891 missing"
   ss -H -ltn 'sport = :9090' | grep -q . || die "Mihomo controller 9090 missing"
@@ -47,6 +67,7 @@ if [[ "$ROLE" == "iran" ]]; then
   echo "  sudo anytls-xudp-health"
   echo "  sudo anytls-tunnel-health"
   echo "  sudo anytls-replace"
+  echo "  sudo anytls-repair-xui"
 else
   systemctl is-active --quiet anytls-tunnel || die "anytls-tunnel inactive"
   systemctl is-active --quiet anytls-xudp-bridge || die "anytls-xudp-bridge inactive"
