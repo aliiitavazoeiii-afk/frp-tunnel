@@ -35,9 +35,6 @@ require_var(){ local n=$1; [[ -n "${!n:-}" ]] || die "missing $n in env file"; }
 require_secret(){ local n=$1 v; require_var "$n"; v=${!n}; [[ ${#v} -ge 24 ]] || die "$n is too short"; }
 valid_atom(){ [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]]; }
 valid_host(){ [[ "$1" =~ ^[A-Za-z0-9.-]+$ && "$1" != *:* ]]; }
-valid_uuid(){ [[ "$1" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$ ]]; }
-valid_short_id(){ [[ "$1" =~ ^([0-9A-Fa-f]{2}){1,8}$ ]]; }
-valid_reality_key(){ [[ "$1" =~ ^[A-Za-z0-9_-]{40,64}$ ]]; }
 
 if [[ "$ROLE" == "foreign-a" ]]; then
   require_var COVER_HOST_A; require_secret ANYTLS_PASS_A; require_secret SHADOWTLS_PASS_A
@@ -46,19 +43,15 @@ elif [[ "$ROLE" == "foreign-b" ]]; then
   require_var COVER_HOST_B; require_secret ANYTLS_PASS_B; require_secret RESTLS_PASS_B
   valid_host "$COVER_HOST_B" || die "invalid COVER_HOST_B"
 else
-  for n in NODE_A_ADDR NODE_B_ADDR COVER_HOST_A COVER_HOST_B LOCAL_MIXED_PORT LOCAL_CONTROLLER_PORT USER_LISTEN_PORT VLESS_UUID VLESS_REALITY_SNI REALITY_PRIVATE_KEY REALITY_SHORT_ID QUIC_SAFE_MODE; do require_var "$n"; done
+  for n in NODE_A_ADDR NODE_B_ADDR COVER_HOST_A COVER_HOST_B LOCAL_SOCKS_PORT LOCAL_CONTROLLER_PORT QUIC_SAFE_MODE; do require_var "$n"; done
   for n in ANYTLS_PASS_A SHADOWTLS_PASS_A ANYTLS_PASS_B RESTLS_PASS_B CONTROLLER_SECRET; do require_secret "$n"; done
   valid_atom "$NODE_A_ADDR" || die "invalid NODE_A_ADDR"
   valid_atom "$NODE_B_ADDR" || die "invalid NODE_B_ADDR"
   valid_host "$COVER_HOST_A" || die "invalid COVER_HOST_A"
   valid_host "$COVER_HOST_B" || die "invalid COVER_HOST_B"
-  valid_host "$VLESS_REALITY_SNI" || die "invalid VLESS_REALITY_SNI"
-  valid_uuid "$VLESS_UUID" || die "invalid VLESS_UUID"
-  valid_short_id "$REALITY_SHORT_ID" || die "REALITY_SHORT_ID must be 2-16 hex characters with even length"
-  valid_reality_key "$REALITY_PRIVATE_KEY" || die "REALITY_PRIVATE_KEY format looks invalid"
   [[ "$QUIC_SAFE_MODE" == "true" || "$QUIC_SAFE_MODE" == "false" ]] || die "QUIC_SAFE_MODE must be true or false"
-  [[ "$LOCAL_MIXED_PORT" =~ ^[0-9]+$ && "$LOCAL_CONTROLLER_PORT" =~ ^[0-9]+$ && "$USER_LISTEN_PORT" =~ ^[0-9]+$ ]] || die "ports must be numeric"
-  (( 1 <= 10#$USER_LISTEN_PORT && 10#$USER_LISTEN_PORT <= 65535 )) || die "invalid USER_LISTEN_PORT"
+  [[ "$LOCAL_SOCKS_PORT" =~ ^[0-9]+$ && "$LOCAL_CONTROLLER_PORT" =~ ^[0-9]+$ ]] || die "ports must be numeric"
+  (( 1 <= 10#$LOCAL_SOCKS_PORT && 10#$LOCAL_SOCKS_PORT <= 65535 )) || die "invalid LOCAL_SOCKS_PORT"
 fi
 
 install_packages(){
@@ -165,7 +158,7 @@ preflight_ports(){
       die "TCP/$p is already in use by another service"
     fi
   else
-    for p in "$USER_LISTEN_PORT" "$LOCAL_MIXED_PORT" "$LOCAL_CONTROLLER_PORT"; do
+    for p in "$LOCAL_SOCKS_PORT" "$LOCAL_CONTROLLER_PORT"; do
       if port_in_use "$p" && ! systemctl is-active --quiet "$PROJECT_NAME" 2>/dev/null; then
         ss -ltnp "sport = :$p" || true
         die "TCP/$p is already in use by another service"
@@ -229,9 +222,6 @@ YAML
       quic_rule='  - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT'
     fi
     cat > "$out" <<YAML
-mixed-port: ${LOCAL_MIXED_PORT}
-bind-address: 127.0.0.1
-allow-lan: false
 mode: rule
 log-level: info
 ipv6: false
@@ -239,21 +229,12 @@ external-controller: "127.0.0.1:${LOCAL_CONTROLLER_PORT}"
 secret: "${CONTROLLER_SECRET}"
 
 listeners:
-  - name: user-vless-reality
-    type: vless
-    listen: 0.0.0.0
-    port: ${USER_LISTEN_PORT}
+  - name: xray-socks-backend
+    type: socks
+    listen: 127.0.0.1
+    port: ${LOCAL_SOCKS_PORT}
     udp: true
-    users:
-      - username: user
-        uuid: "${VLESS_UUID}"
-    reality-config:
-      dest: "${VLESS_REALITY_SNI}:443"
-      private-key: "${REALITY_PRIVATE_KEY}"
-      short-id:
-        - "${REALITY_SHORT_ID}"
-      server-names:
-        - "${VLESS_REALITY_SNI}"
+    users: []
 
 proxies:
   - name: foreign-a-shadowtls
@@ -391,13 +372,12 @@ SYSCTL
 }
 
 open_firewall_port(){
-  local public_port=443
-  [[ "$ROLE" == "iran" ]] && public_port="$USER_LISTEN_PORT"
+  [[ "$ROLE" == foreign-* ]] || return 0
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    ufw allow "${public_port}/tcp" comment 'anytls-tunnel' >/dev/null
+    ufw allow 443/tcp comment 'anytls-tunnel' >/dev/null
   fi
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="${public_port}/tcp" >/dev/null
+    firewall-cmd --permanent --add-port=443/tcp >/dev/null
     firewall-cmd --reload >/dev/null
   fi
 }
@@ -444,8 +424,7 @@ start_and_verify(){
   if [[ "$ROLE" == foreign-* ]]; then
     ss -H -ltn "sport = :443" | grep -q . || restore_previous_after_failed_start "service active but TCP/443 is not listening"
   else
-    ss -H -ltn "sport = :${USER_LISTEN_PORT}" | grep -q . || restore_previous_after_failed_start "service active but VLESS user port is not listening"
-    ss -H -ltn "sport = :${LOCAL_MIXED_PORT}" | grep -q . || restore_previous_after_failed_start "service active but local mixed port is not listening"
+    ss -H -ltn "sport = :${LOCAL_SOCKS_PORT}" | grep -q . || restore_previous_after_failed_start "service active but local SOCKS backend port is not listening"
     ss -H -ltn "sport = :${LOCAL_CONTROLLER_PORT}" | grep -q . || restore_previous_after_failed_start "service active but controller port is not listening"
   fi
 }
@@ -469,7 +448,7 @@ install_helpers
 start_and_verify
 log "SUCCESS: ${PROJECT_NAME} role=${ROLE} is active"
 if [[ "$ROLE" == "iran" ]]; then
-  log "VLESS/REALITY user listener is active on TCP/${USER_LISTEN_PORT}"
+  log "x-ui/Xray should send user traffic to SOCKS5 127.0.0.1:${LOCAL_SOCKS_PORT}"
   log "Run: sudo anytls-tunnel-health"
   log "Run: sudo anytls-tunnel-probe-test"
 else
