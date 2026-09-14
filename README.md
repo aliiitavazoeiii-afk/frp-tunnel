@@ -1,4 +1,4 @@
-# AnyTLS Tunnel v1.4.0 — x-ui + XUDP bridge mode
+# AnyTLS Tunnel v1.4.2 — x-ui + XUDP bridge mode
 
 Three-node backend tunnel for an existing x-ui/Xray deployment:
 
@@ -7,6 +7,18 @@ Three-node backend tunnel for an existing x-ui/Xray deployment:
 - Iran: Mihomo sticky load-balance/failover backend
 - XUDP bridge: pinned Xray v26.3.27 carries client UDP (including QUIC/UDP 443) inside TCP before it enters AnyTLS
 - x-ui/Xray stays user-facing and keeps the existing VLESS/REALITY users and public port 443.
+
+## Important compatibility note
+
+A production compatibility issue was confirmed where some v2ray-based clients could reach Google on older tunnel designs, while NPV Tunnel could not reliably reach Google/YouTube over the initial AnyTLS path. The XUDP bridge fixed both Google and YouTube/Shorts for NPV Tunnel.
+
+For the full diagnosis, proof tests, architecture, safety rules, and instructions for reusing the same fix in future tunnel projects, read:
+
+```text
+XUDP-COMPATIBILITY-FIX.md
+```
+
+Future chats/projects should check that document before treating similar Google/YouTube/client-specific failures as DNS, FakeDNS, MTU, SNI, or general censorship issues.
 
 ## Why the XUDP bridge exists
 
@@ -25,7 +37,7 @@ The XUDP settings intentionally match the previously proven YouTube/Instagram fi
 
 `concurrency: -1` means ordinary TCP is not Muxed; XUDP is used for UDP.
 
-## Traffic path after v1.4.0 upgrade
+## Traffic path after v1.4.2 upgrade
 
 ```text
 User
@@ -55,13 +67,13 @@ For an existing v1.3.x deployment, update the branch and apply the XUDP upgrade 
 
 ```bash
 # Foreign A
-sudo bash upgrade-xudp.sh foreign-a
+sudo bash upgrade-xudp-v3.sh foreign-a
 
 # Foreign B
-sudo bash upgrade-xudp.sh foreign-b
+sudo bash upgrade-xudp-v3.sh foreign-b
 
 # Iran, only after both Foreign upgrades succeeded
-sudo bash upgrade-xudp.sh iran
+sudo bash upgrade-xudp-v3.sh iran
 ```
 
 The Iran upgrade is fail-closed:
@@ -79,7 +91,7 @@ sudo anytls-xudp-health
 sudo anytls-tunnel-health
 ```
 
-Then disconnect/reconnect the client and test YouTube/Shorts.
+Then disconnect/reconnect the client and test Google, YouTube, Shorts, and any client application that previously behaved differently from v2ray.
 
 ## Safety
 
