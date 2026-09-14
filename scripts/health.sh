@@ -28,7 +28,7 @@ check_node foreign-a-shadowtls || fail=1
 check_node foreign-b-restls || fail=1
 
 echo "BALANCED PATH              testing..."
-if ip=$(curl -fsS --proxy "http://127.0.0.1:${LOCAL_MIXED_PORT}" --connect-timeout 5 --max-time 12 https://api.ipify.org); then
+if ip=$(curl -fsS --proxy "socks5h://127.0.0.1:${LOCAL_SOCKS_PORT}" --connect-timeout 5 --max-time 12 https://api.ipify.org); then
   echo "BALANCED PATH              OK egress=$ip"
 else
   echo "BALANCED PATH              FAIL"
