@@ -17,10 +17,11 @@ esac
 [[ -f "$BASE_DIR/upgrade-xudp-v3.sh" ]] || die "upgrade-xudp-v3.sh missing"
 [[ -f "$BASE_DIR/replace-node.sh" ]] || die "replace-node.sh missing"
 [[ -f "$BASE_DIR/repair-xui-anytls.sh" ]] || die "repair-xui-anytls.sh missing"
+[[ -f "$BASE_DIR/sync-xui-working-state.sh" ]] || die "sync-xui-working-state.sh missing"
 
 cat <<EOF
 ============================================================
-AnyTLS Tunnel FINAL installer v1.5.1
+AnyTLS Tunnel FINAL installer v1.5.2
 Role: $ROLE
 Base AnyTLS + automatic XUDP compatibility layer
 ============================================================
@@ -44,6 +45,12 @@ if [[ "$ROLE" == "iran" ]]; then
     log "XUDP upgrade returned rc=${xudp_rc}; checking fresh-x-ui bootstrap path"
     bash "$BASE_DIR/repair-xui-anytls.sh"
   fi
+
+  # Match the production state that fixed NPV/Google/YouTube: keep XUDP on
+  # 127.0.0.1:7891 and force the x-ui SOCKS outbound to IPv4 destinations.
+  # This avoids IPv6 literal/destination behavior that was observed on the
+  # failing client path while leaving the public VLESS/REALITY inbound intact.
+  bash "$BASE_DIR/sync-xui-working-state.sh"
 else
   bash "$BASE_DIR/upgrade-xudp-v3.sh" "$ROLE"
 fi
@@ -51,8 +58,10 @@ fi
 if [[ "$ROLE" == "iran" ]]; then
   install -m 0755 "$BASE_DIR/replace-node.sh" /usr/local/sbin/anytls-replace
   install -m 0755 "$BASE_DIR/repair-xui-anytls.sh" /usr/local/sbin/anytls-repair-xui
+  install -m 0755 "$BASE_DIR/sync-xui-working-state.sh" /usr/local/sbin/anytls-sync-xui
   log "Installed safe replacement command: sudo anytls-replace"
   log "Installed x-ui bootstrap/repair command: sudo anytls-repair-xui"
+  log "Installed known-good x-ui sync command: sudo anytls-sync-xui"
   log "Verifying final Iran services"
   systemctl is-active --quiet anytls-tunnel || die "anytls-tunnel inactive"
   systemctl is-active --quiet anytls-xudp-bridge || die "anytls-xudp-bridge inactive"
@@ -68,6 +77,7 @@ if [[ "$ROLE" == "iran" ]]; then
   echo "  sudo anytls-tunnel-health"
   echo "  sudo anytls-replace"
   echo "  sudo anytls-repair-xui"
+  echo "  sudo anytls-sync-xui"
 else
   systemctl is-active --quiet anytls-tunnel || die "anytls-tunnel inactive"
   systemctl is-active --quiet anytls-xudp-bridge || die "anytls-xudp-bridge inactive"
