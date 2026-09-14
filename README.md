@@ -1,30 +1,34 @@
-# AnyTLS Tunnel v1.4.2 — x-ui + XUDP bridge mode
+# AnyTLS Tunnel v1.5.0 — FINAL x-ui + XUDP mode
 
-Three-node backend tunnel for an existing x-ui/Xray deployment:
+Production 3-node backend tunnel for an existing x-ui/Xray deployment:
 
-- Foreign A: AnyTLS + ShadowTLS v3 on TCP/443
-- Foreign B: AnyTLS + ResTLS on TCP/443
+- Foreign A / F1: AnyTLS + ShadowTLS v3 on public TCP/443
+- Foreign B / F2: AnyTLS + ResTLS on public TCP/443
 - Iran: Mihomo sticky load-balance/failover backend
-- XUDP bridge: pinned Xray v26.3.27 carries client UDP (including QUIC/UDP 443) inside TCP before it enters AnyTLS
-- x-ui/Xray stays user-facing and keeps the existing VLESS/REALITY users and public port 443.
+- Mandatory XUDP compatibility bridge: pinned Xray v26.3.27
+- Existing x-ui/Xray remains user-facing on TCP/443 and keeps the existing VLESS/REALITY users.
 
-## Important compatibility note
-
-A production compatibility issue was confirmed where some v2ray-based clients could reach Google on older tunnel designs, while NPV Tunnel could not reliably reach Google/YouTube over the initial AnyTLS path. The XUDP bridge fixed both Google and YouTube/Shorts for NPV Tunnel.
-
-For the full diagnosis, proof tests, architecture, safety rules, and instructions for reusing the same fix in future tunnel projects, read:
+## Final traffic path
 
 ```text
-XUDP-COMPATIBILITY-FIX.md
+User
+  -> x-ui/Xray Iran :443
+  -> 127.0.0.1:7891 (Xray XUDP bridge)
+  -> inner VLESS/XUDP over TCP
+  -> 127.0.0.1:7890 (Mihomo carrier)
+  -> AnyTLS sticky A/B failover
+  -> Foreign A/B :443
+  -> 127.0.0.1:2443 (Foreign Xray XUDP endpoint)
+  -> Internet
 ```
 
-Future chats/projects should check that document before treating similar Google/YouTube/client-specific failures as DNS, FakeDNS, MTU, SNI, or general censorship issues.
+No extra public XUDP port is opened. Foreign `2443`, Iran `7890`, `7891`, and `9090` are loopback-only.
 
-## Why the XUDP bridge exists
+## Why XUDP is mandatory
 
-Direct SOCKS UDP through the current Mihomo/AnyTLS path can send UDP requests while failing to return UDP replies on some deployments. The XUDP bridge avoids that path entirely: Xray aggregates UDP into XUDP carried over an inner VLESS/TCP connection, and AnyTLS only sees TCP.
+A production compatibility failure was confirmed where direct SOCKS UDP through Mihomo/AnyTLS sent UDP requests but failed to return replies. This caused Google/YouTube failures in NPV Tunnel even when older v2ray/XHTTP paths worked.
 
-The XUDP settings intentionally match the previously proven YouTube/Instagram fix:
+The proven fix is:
 
 ```json
 {
@@ -35,72 +39,84 @@ The XUDP settings intentionally match the previously proven YouTube/Instagram fi
 }
 ```
 
-`concurrency: -1` means ordinary TCP is not Muxed; XUDP is used for UDP.
+See `XUDP-COMPATIBILITY-FIX.md` for the full diagnosis.
 
-## Traffic path after v1.4.2 upgrade
+## Final fresh installation
 
-```text
-User
-  -> x-ui/Xray Iran :443
-  -> SOCKS 127.0.0.1:7891 (Xray XUDP bridge)
-  -> inner VLESS/XUDP over TCP
-  -> SOCKS 127.0.0.1:7890 (Mihomo AnyTLS carrier)
-  -> AnyTLS A/B sticky load-balance/failover
-  -> Foreign Mihomo
-  -> 127.0.0.1:2443 (Foreign Xray XUDP endpoint)
-  -> Internet
-```
+Install in this order: Foreign A -> Foreign B -> Iran.
 
-The Foreign XUDP endpoint is loopback-only. No new public port is opened.
-
-## Existing install
-
-Base install remains:
+On every fresh server:
 
 ```bash
-sudo bash setup.sh foreign-a
-sudo bash setup.sh foreign-b
-sudo bash setup.sh iran
+sudo rm -rf /opt/anytls-tunnel
+sudo git clone -b anytls-v1.3.0 https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/anytls-tunnel
+cd /opt/anytls-tunnel
 ```
 
-For an existing v1.3.x deployment, update the branch and apply the XUDP upgrade in this order:
+Foreign A:
 
 ```bash
-# Foreign A
-sudo bash upgrade-xudp-v3.sh foreign-a
-
-# Foreign B
-sudo bash upgrade-xudp-v3.sh foreign-b
-
-# Iran, only after both Foreign upgrades succeeded
-sudo bash upgrade-xudp-v3.sh iran
+sudo bash setup-final.sh foreign-a
 ```
 
-The Iran upgrade is fail-closed:
+Foreign B:
 
-1. Installs and validates the Xray bridge.
-2. Tests TCP through `127.0.0.1:7891` and expects HTTP 204.
-3. Tests a real UDP DNS round-trip through `127.0.0.1:7891`.
-4. Only if both tests succeed, backs up the x-ui database and changes the existing `anytls-tunnel` SOCKS outbound from port `7890` to `7891`.
-5. If x-ui fails to restart or the runtime config does not contain `7891`, the x-ui database is restored automatically.
+```bash
+sudo bash setup-final.sh foreign-b
+```
 
-Run after upgrade:
+Iran, after x-ui/Xray already exists on public TCP/443:
+
+```bash
+sudo bash setup-final.sh iran
+```
+
+The Iran installer performs TCP + real UDP/XUDP validation before switching x-ui to `127.0.0.1:7891`.
+
+## Health
 
 ```bash
 sudo anytls-xudp-health
 sudo anytls-tunnel-health
 ```
 
-Then disconnect/reconnect the client and test Google, YouTube, Shorts, and any client application that previously behaved differently from v2ray.
+## Replace filtered F1/F2
 
-## Safety
+First install the new Foreign server using the same final role installer. Then on Iran run:
 
-- Mihomo pinned to v1.19.30 and SHA-256 verified.
-- Xray bridge pinned to v26.3.27 and SHA-256 verified.
-- Candidate XUDP config validated with `xray run -test` before activation.
-- Existing public x-ui/Xray listener on TCP/443 is not replaced.
-- Mihomo SOCKS/controller and both XUDP endpoints are loopback-only.
-- Foreign nodes still expose only AnyTLS TCP/443 for this project.
-- No new provider firewall rule is required for XUDP.
-- Iran x-ui routing is changed only after end-to-end TCP and UDP bridge tests pass.
-- x-ui DB snapshot is stored under `/var/lib/anytls-tunnel/backups/` before switching the outbound.
+```bash
+sudo anytls-replace
+```
+
+Choose F1 or F2 and enter the new server IP/hostname, cover hostname, and credentials printed by the new Foreign installer.
+
+`anytls-replace` probes the new node through an isolated temporary AnyTLS + XUDP path and requires both HTTP 204 and a real UDP DNS round-trip before production is changed. If activation fails, the previous production config/env is restored.
+
+It does not change x-ui users, the public inbound, the XUDP bridge, or the other Foreign node.
+
+## Existing older deployment
+
+For an already installed v1.3.x/v1.4.x deployment, the XUDP compatibility upgrade remains:
+
+```bash
+sudo bash upgrade-xudp-v3.sh foreign-a
+sudo bash upgrade-xudp-v3.sh foreign-b
+sudo bash upgrade-xudp-v3.sh iran
+```
+
+Then install the replacement command on Iran:
+
+```bash
+sudo install -m 0755 replace-node.sh /usr/local/sbin/anytls-replace
+```
+
+## Pinned versions
+
+- Mihomo `v1.19.30`
+- Xray `v26.3.27`
+
+Candidate configs are validated before activation and binaries are SHA-256 verified.
+
+## Full operational documentation
+
+Read `FINAL-RUNBOOK.md` for fresh installation, recovery, replacement, and non-regression rules.
