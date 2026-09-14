@@ -15,4 +15,4 @@ sed 's|local out="${BRIDGE_CONFIG}\.new"|local out="${CONFIG_DIR}/xudp-bridge.ne
 chmod 0700 "$TMP"
 trap 'rm -f "$TMP"' EXIT
 
-exec bash "$TMP" "$@"
+bash "$TMP" "$@"
