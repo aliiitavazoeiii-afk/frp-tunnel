@@ -94,8 +94,9 @@ prompt_bool(){
 }
 
 write_env(){
-  local path=$1
+  local path=$1 old_umask
   shift
+  old_umask=$(umask)
   umask 077
   : > "$path"
   while (( $# )); do
@@ -104,10 +105,15 @@ write_env(){
     printf '%s=%q\n' "$key" "$value" >> "$path"
   done
   chmod 600 "$path"
+  umask "$old_umask"
+}
+
+prepare_exec_dir(){
+  install -d -m 0755 /usr/local/lib/anytls-tunnel
 }
 
 cat <<'BANNER'
-AnyTLS Tunnel interactive setup v1.3.0
+AnyTLS Tunnel interactive setup v1.3.1
 
 Roles:
   1) foreign-a  = AnyTLS + ShadowTLS v3
@@ -136,6 +142,7 @@ case "$ROLE" in
       COVER_HOST_A "$COVER_HOST_A" \
       ANYTLS_PASS_A "$ANYTLS_PASS_A" \
       SHADOWTLS_PASS_A "$SHADOWTLS_PASS_A"
+    prepare_exec_dir
     bash "$INSTALLER" foreign-a "$ENV_FILE"
     cat <<EOF2
 
@@ -157,6 +164,7 @@ EOF2
       COVER_HOST_B "$COVER_HOST_B" \
       ANYTLS_PASS_B "$ANYTLS_PASS_B" \
       RESTLS_PASS_B "$RESTLS_PASS_B"
+    prepare_exec_dir
     bash "$INSTALLER" foreign-b "$ENV_FILE"
     cat <<EOF2
 
@@ -198,6 +206,7 @@ EOF2
       CONTROLLER_SECRET "$CONTROLLER_SECRET" \
       LOCAL_SOCKS_PORT "$LOCAL_SOCKS_PORT" \
       LOCAL_CONTROLLER_PORT "$LOCAL_CONTROLLER_PORT"
+    prepare_exec_dir
     bash "$INSTALLER" iran "$ENV_FILE"
     cat <<EOF2
 
