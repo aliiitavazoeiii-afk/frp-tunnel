@@ -14,7 +14,7 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ $# -le 1 ]] || die "usage: sudo bash install-shared-node.sh [maya1|maya3]"
 profile="${1:-}"
 [[ -f $C/role && "$(tr -d '[:space:]' < $C/role)" == iran ]] || die "Iran role required"
-for f in "$D" "$CFG" "$B/shared-node-probe.sh" "$B/shared-node-scheduler.sh" "$B/shared-node-render.py" "$B/uninstall-shared-node.sh"; do [[ -f "$f" ]] || die "missing $f"; done
+for f in "$D" "$CFG" "$B/shared-node-probe.sh" "$B/node-full-probe.sh" "$B/shared-node-scheduler.sh" "$B/shared-node-render.py" "$B/uninstall-shared-node.sh"; do [[ -f "$f" ]] || die "missing $f"; done
 for s in anytls-tunnel anytls-xudp-bridge x-ui; do systemctl is-active --quiet "$s" || die "$s inactive"; done
 source "$D"
 python3 <<'PY'
@@ -32,9 +32,7 @@ code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7891 --connect-timeout 8 --max-ti
 [[ "$code" == 204 ]] || die "current XUDP path unhealthy; production untouched"
 
 echo "Schedule: maya3=15:00-21:00, maya1=21:00-03:00, timezone=Asia/Tehran"
-if [[ -z "$profile" ]]; then
-  read -r -p "This server [maya1/maya3]: " profile
-fi
+if [[ -z "$profile" ]]; then read -r -p "This server [maya1/maya3]: " profile; fi
 [[ "$profile" == maya1 || "$profile" == maya3 ]] || die "invalid profile: use maya1 or maya3"
 echo "Shared profile fixed to: $profile"
 read -r -p "F5 public IP/hostname: " addr
@@ -65,13 +63,14 @@ rollback(){ log "ROLLBACK to pre-shared config"; cp -a "$BK/config.yaml" "$CFG";
 trap 'rc=$?; if ((rc!=0)); then rollback; fi; cleanup' EXIT
 
 install -m 0755 "$B/shared-node-probe.sh" /usr/local/sbin/anytls-shared-probe
+install -m 0755 "$B/node-full-probe.sh" /usr/local/sbin/anytls-node-full-probe
 install -m 0755 "$B/shared-node-scheduler.sh" /usr/local/sbin/anytls-shared-scheduler
 install -m 0755 "$B/uninstall-shared-node.sh" /usr/local/sbin/anytls-shared-uninstall
 install -m 0600 "$TE" "$E"
 
 cat >/etc/systemd/system/anytls-shared-scheduler.service <<'UNIT'
 [Unit]
-Description=AnyTLS shared F5 scheduler
+Description=AnyTLS all-node health gate and shared F5 scheduler
 After=network-online.target anytls-tunnel.service anytls-xudp-bridge.service
 Requires=anytls-tunnel.service anytls-xudp-bridge.service
 [Service]
@@ -86,9 +85,9 @@ ReadWritePaths=/var/lib/anytls-tunnel
 UNIT
 cat >/etc/systemd/system/anytls-shared-scheduler.timer <<'UNIT'
 [Unit]
-Description=AnyTLS shared F5 scheduler timer
+Description=AnyTLS all-node health gate timer
 [Timer]
-OnBootSec=90s
+OnBootSec=60s
 OnUnitActiveSec=60s
 AccuracySec=5s
 Persistent=true
@@ -103,11 +102,11 @@ cp "$T/config.yaml" "$CFG"; chown anytls-tunnel:anytls-tunnel "$CFG"; chmod 0600
 reload || die "Mihomo API reload failed"
 hc=$(curl -sS -o "$T/b" -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT "$API/proxies/TUNNEL" -d '{"name":"TUNNEL-BASE"}' || true)
 [[ "$hc" == 204 ]] || die "could not pin BASE after reload"
-[[ "$(curl -fsS "${AUTH[@]}" "$API/proxies/TUNNEL" | jq -r '.now')" == TUNNEL-BASE ]] || die "selector not BASE"
 code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7891 --connect-timeout 8 --max-time 20 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
 [[ "$code" == 204 ]] || die "production path failed after reload"
 
 systemctl daemon-reload
 systemctl enable --now anytls-shared-scheduler.timer >/dev/null
+systemctl start anytls-shared-scheduler.service
 trap - EXIT; cleanup
-log "SUCCESS: F5 installed but current traffic remains on BASE. Scheduler will activate it only inside $profile window after health probe."
+log "SUCCESS: F5 installed. All foreign nodes are now health-gated; healthy subsets use round-robin."
