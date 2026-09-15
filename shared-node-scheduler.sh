@@ -10,6 +10,7 @@ STATE_FILE="${STATE_DIR}/shared-node.state"
 PROBE="/usr/local/sbin/anytls-shared-probe"
 TZ_NAME="Asia/Tehran"
 QUICK_INTERVAL="${QUICK_INTERVAL:-300}"
+RETRY_INTERVAL="${RETRY_INTERVAL:-300}"
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
@@ -33,8 +34,10 @@ chmod 0600 "$STATE_FILE"
 CURRENT_MODE="BASE"
 BLOCKED_WINDOW=""
 LAST_QUICK_PROBE=0
+LAST_FULL_PROBE=0
 source "$STATE_FILE" 2>/dev/null || true
 [[ "$LAST_QUICK_PROBE" =~ ^[0-9]+$ ]] || LAST_QUICK_PROBE=0
+[[ "$LAST_FULL_PROBE" =~ ^[0-9]+$ ]] || LAST_FULL_PROBE=0
 
 API="http://127.0.0.1:${LOCAL_CONTROLLER_PORT}"
 AUTH=(-H "Authorization: Bearer ${CONTROLLER_SECRET}")
@@ -55,6 +58,7 @@ save_state(){
 CURRENT_MODE=$(printf %q "$CURRENT_MODE")
 BLOCKED_WINDOW=$(printf %q "$BLOCKED_WINDOW")
 LAST_QUICK_PROBE=$(printf %q "$LAST_QUICK_PROBE")
+LAST_FULL_PROBE=$(printf %q "$LAST_FULL_PROBE")
 EOF
   mv -f "${STATE_FILE}.new" "$STATE_FILE"
   chmod 0600 "$STATE_FILE"
@@ -111,6 +115,7 @@ fi
 
 now_sel=$(selection || true)
 [[ -n "$now_sel" ]] || die "could not read TUNNEL selector"
+now_epoch=$(date +%s)
 
 if [[ "$active" != true ]]; then
   if [[ "$now_sel" != "TUNNEL-BASE" ]]; then
@@ -120,42 +125,46 @@ if [[ "$active" != true ]]; then
   CURRENT_MODE="BASE"
   BLOCKED_WINDOW=""
   LAST_QUICK_PROBE=0
+  LAST_FULL_PROBE=0
   save_state
   exit 0
 fi
 
-if [[ "$BLOCKED_WINDOW" == "$window_id" ]]; then
+# A failed F5 probe no longer blocks the whole window. Keep BASE and retry a
+# full isolated probe every RETRY_INTERVAL seconds until F5 becomes healthy.
+if [[ "$BLOCKED_WINDOW" == "$window_id" ]] && (( now_epoch - LAST_FULL_PROBE < RETRY_INTERVAL )); then
   if [[ "$now_sel" != "TUNNEL-BASE" ]]; then
-    set_group TUNNEL-BASE || die "failed to keep BASE after F5 failure"
+    set_group TUNNEL-BASE || die "failed to keep BASE while waiting for retry"
   fi
   CURRENT_MODE="BASE"
   save_state
-  log "F5 is blocked for current window $window_id; keeping BASE"
+  log "F5 retry cooldown active for $window_id; keeping BASE"
   exit 0
 fi
 
 if [[ "$now_sel" != "TUNNEL-SHARED" ]]; then
-  log "shared window $window_id starting; running isolated F5 pre-activation probe"
+  log "shared window $window_id active; running isolated F5 pre-activation probe"
+  LAST_FULL_PROBE=$now_epoch
   if SHARED_ENV="$SHARED_ENV" "$PROBE"; then
     log "F5 passed full probe; enabling TUNNEL-SHARED for NEW connections"
     set_group TUNNEL-SHARED || die "F5 healthy but selector switch failed"
     CURRENT_MODE="SHARED"
-    LAST_QUICK_PROBE=$(date +%s)
+    BLOCKED_WINDOW=""
+    LAST_QUICK_PROBE=$now_epoch
     save_state
     exit 0
   else
-    log "F5 full probe failed; NOT entering pool for this window"
+    log "F5 full probe failed; keeping BASE and retrying in ${RETRY_INTERVAL}s"
     set_group TUNNEL-BASE || true
     CURRENT_MODE="BASE"
     BLOCKED_WINDOW="$window_id"
-    LAST_QUICK_PROBE=$(date +%s)
+    LAST_QUICK_PROBE=$now_epoch
     save_state
     exit 0
   fi
 fi
 
 CURRENT_MODE="SHARED"
-now_epoch=$(date +%s)
 if (( now_epoch - LAST_QUICK_PROBE >= QUICK_INTERVAL )); then
   log "running active-window F5 quick health check"
   if quick_probe; then
@@ -163,10 +172,11 @@ if (( now_epoch - LAST_QUICK_PROBE >= QUICK_INTERVAL )); then
     save_state
     log "F5 quick health = OK"
   else
-    log "F5 became unhealthy; switching NEW connections to BASE and blocking F5 until next window"
+    log "F5 became unhealthy; switching NEW connections to BASE and scheduling full retry"
     set_group TUNNEL-BASE || die "F5 unhealthy and BASE failback failed"
     CURRENT_MODE="BASE"
     BLOCKED_WINDOW="$window_id"
+    LAST_FULL_PROBE=$now_epoch
     LAST_QUICK_PROBE=$now_epoch
     save_state
   fi
