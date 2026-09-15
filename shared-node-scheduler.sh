@@ -7,10 +7,8 @@ SHARED_ENV="${CONFIG_DIR}/shared-node.env"
 DEPLOY_ENV="${CONFIG_DIR}/deploy.env"
 STATE_DIR="/var/lib/${PROJECT}"
 STATE_FILE="${STATE_DIR}/shared-node.state"
-PROBE="/usr/local/sbin/anytls-shared-probe"
+FULL_PROBE="/usr/local/sbin/anytls-node-full-probe"
 TZ_NAME="Asia/Tehran"
-QUICK_INTERVAL="${QUICK_INTERVAL:-300}"
-RETRY_INTERVAL="${RETRY_INTERVAL:-300}"
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
@@ -18,168 +16,153 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
 [[ -f "$SHARED_ENV" ]] || die "missing $SHARED_ENV"
 [[ -f "$DEPLOY_ENV" ]] || die "missing $DEPLOY_ENV"
-[[ -x "$PROBE" ]] || die "missing $PROBE"
+[[ -x "$FULL_PROBE" ]] || die "missing $FULL_PROBE"
 command -v jq >/dev/null 2>&1 || die "jq missing"
-
+# shellcheck disable=SC1090
 source "$SHARED_ENV"
+# shellcheck disable=SC1090
 source "$DEPLOY_ENV"
-
 [[ "${SHARED_PROFILE:-}" == "maya1" || "${SHARED_PROFILE:-}" == "maya3" ]] || die "invalid SHARED_PROFILE"
 [[ -n "${CONTROLLER_SECRET:-}" && -n "${LOCAL_CONTROLLER_PORT:-}" ]] || die "controller config missing"
 
 mkdir -p "$STATE_DIR"
-touch "$STATE_FILE"
-chmod 0600 "$STATE_FILE"
-
-CURRENT_MODE="BASE"
-BLOCKED_WINDOW=""
-LAST_QUICK_PROBE=0
-LAST_FULL_PROBE=0
-source "$STATE_FILE" 2>/dev/null || true
-[[ "$LAST_QUICK_PROBE" =~ ^[0-9]+$ ]] || LAST_QUICK_PROBE=0
-[[ "$LAST_FULL_PROBE" =~ ^[0-9]+$ ]] || LAST_FULL_PROBE=0
-
 API="http://127.0.0.1:${LOCAL_CONTROLLER_PORT}"
 AUTH=(-H "Authorization: Bearer ${CONTROLLER_SECRET}")
+A="foreign-a-shadowtls"
+B="foreign-b-restls"
+F="foreign-shared-shadowtls"
 
 api_get(){ curl -fsS "${AUTH[@]}" "$1"; }
 api_put_json(){
-  local url=$1 payload=$2 code
-  code=$(curl -sS -o /tmp/anytls-shared-api.$$ -w '%{http_code}' \
-    "${AUTH[@]}" -H 'Content-Type: application/json' \
-    -X PUT -d "$payload" "$url" || true)
-  rm -f /tmp/anytls-shared-api.$$
-  [[ "$code" == "204" ]]
+  local url=$1 payload=$2 code tmp
+  tmp=$(mktemp /tmp/anytls-guard-api.XXXXXX)
+  code=$(curl -sS -o "$tmp" -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT -d "$payload" "$url" || true)
+  rm -f "$tmp"
+  [[ "$code" == 204 ]]
 }
-
-save_state(){
-  umask 077
-  cat >"${STATE_FILE}.new" <<EOF
-CURRENT_MODE=$(printf %q "$CURRENT_MODE")
-BLOCKED_WINDOW=$(printf %q "$BLOCKED_WINDOW")
-LAST_QUICK_PROBE=$(printf %q "$LAST_QUICK_PROBE")
-LAST_FULL_PROBE=$(printf %q "$LAST_FULL_PROBE")
-EOF
-  mv -f "${STATE_FILE}.new" "$STATE_FILE"
-  chmod 0600 "$STATE_FILE"
-}
-
 selection(){ api_get "$API/proxies/TUNNEL" | jq -r '.now // empty'; }
 set_group(){
-  local group=$1
-  [[ "$group" == "TUNNEL-BASE" || "$group" == "TUNNEL-SHARED" ]] || return 2
-  api_put_json "$API/proxies/TUNNEL" "$(jq -cn --arg n "$group" '{name:$n}')" || return 1
-  [[ "$(selection)" == "$group" ]]
+  local g=$1
+  case "$g" in TUNNEL-BASE|BASE-A|BASE-B|TUNNEL-SHARED|SHARED-AF5|SHARED-BF5|SHARED-F5|REJECT) ;; *) return 2;; esac
+  api_put_json "$API/proxies/TUNNEL" "$(jq -cn --arg n "$g" '{name:$n}')" || return 1
+  [[ "$(selection)" == "$g" ]]
 }
 
-quick_probe(){
-  local name url expected out spec
+group_has(){
+  local g=$1 node=$2
+  case "$g:$node" in
+    TUNNEL-BASE:$A|TUNNEL-BASE:$B|TUNNEL-SHARED:$A|TUNNEL-SHARED:$B|TUNNEL-SHARED:$F|BASE-A:$A|BASE-B:$B|SHARED-AF5:$A|SHARED-AF5:$F|SHARED-BF5:$B|SHARED-BF5:$F|SHARED-F5:$F) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+probe_once(){
+  local node=$1 label=$2 url=$3 expected=$4 out
+  out=$(curl -fsS -G "${AUTH[@]}" \
+    --data-urlencode "url=$url" \
+    --data-urlencode "timeout=8000" \
+    --data-urlencode "expected=$expected" \
+    "$API/proxies/$node/delay" 2>/dev/null || true)
+  jq -e '.delay|numbers' >/dev/null 2>&1 <<<"$out"
+}
+
+quick_probe_node(){
+  local node=$1 label url expected spec
   for spec in \
-    "gstatic|https://www.gstatic.com/generate_204|204" \
-    "youtube|https://www.youtube.com/|200-499" \
-    "instagram|https://www.instagram.com/|200-499"
+    'gstatic|https://www.gstatic.com/generate_204|204' \
+    'youtube|https://www.youtube.com/|200-499' \
+    'ytimg|https://i.ytimg.com/|200-499' \
+    'instagram|https://www.instagram.com/|200-499'
   do
-    IFS='|' read -r name url expected <<<"$spec"
-    out=$(curl -fsS -G "${AUTH[@]}" \
-      --data-urlencode "url=$url" \
-      --data-urlencode "timeout=8000" \
-      --data-urlencode "expected=$expected" \
-      "$API/proxies/foreign-shared-shadowtls/delay" || true)
-    jq -e '.delay|numbers' >/dev/null 2>&1 <<<"$out" || {
-      log "quick probe failed: $name ${out:-no-response}"
+    IFS='|' read -r label url expected <<<"$spec"
+    if probe_once "$node" "$label" "$url" "$expected"; then continue; fi
+    sleep 1
+    if ! probe_once "$node" "$label" "$url" "$expected"; then
+      log "UNHEALTHY $node: $label failed twice"
       return 1
-    }
+    fi
   done
+  return 0
+}
+
+drain_node(){
+  local node=$1 ids id n=0
+  ids=$(api_get "$API/connections" | jq -r --arg n "$node" '.connections[]? | select((.chains // []) | index($n)) | .id' || true)
+  [[ -n "$ids" ]] || return 0
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    curl -sS -o /dev/null "${AUTH[@]}" -X DELETE "$API/connections/$id" || true
+    n=$((n+1))
+  done <<<"$ids"
+  log "drained $n existing connection(s) from unhealthy $node"
+}
+
+ensure_candidate(){
+  local short=$1 node=$2 current=$3
+  if ! quick_probe_node "$node"; then
+    group_has "$current" "$node" && drain_node "$node"
+    return 1
+  fi
+  if ! group_has "$current" "$node"; then
+    log "$node quick health passed; running isolated full XUDP pre-activation probe"
+    if ! "$FULL_PROBE" "$short"; then
+      log "UNHEALTHY $node: full XUDP pre-activation probe failed"
+      return 1
+    fi
+  fi
+  return 0
 }
 
 tehran_hm=$(TZ="$TZ_NAME" date +%H%M)
-tehran_date=$(TZ="$TZ_NAME" date +%Y%m%d)
 active=false
-window_id=""
-
-if [[ "$SHARED_PROFILE" == "maya3" ]]; then
-  if (( 10#$tehran_hm >= 1500 && 10#$tehran_hm < 2100 )); then
-    active=true
-    window_id="maya3-${tehran_date}-1500"
-  fi
+if [[ "$SHARED_PROFILE" == maya3 ]]; then
+  ((10#$tehran_hm >= 1500 && 10#$tehran_hm < 2100)) && active=true
 else
-  if (( 10#$tehran_hm >= 2100 )); then
-    active=true
-    window_id="maya1-${tehran_date}-2100"
-  elif (( 10#$tehran_hm < 300 )); then
-    active=true
-    prev=$(TZ="$TZ_NAME" date -d 'yesterday' +%Y%m%d)
-    window_id="maya1-${prev}-2100"
-  fi
+  ((10#$tehran_hm >= 2100 || 10#$tehran_hm < 300)) && active=true
 fi
 
-now_sel=$(selection || true)
-[[ -n "$now_sel" ]] || die "could not read TUNNEL selector"
-now_epoch=$(date +%s)
+current=$(selection || true)
+[[ -n "$current" ]] || die "could not read TUNNEL selector"
+ha=0; hb=0; hf=0
+ensure_candidate a "$A" "$current" && ha=1 || true
+ensure_candidate b "$B" "$current" && hb=1 || true
+if [[ "$active" == true ]]; then ensure_candidate shared "$F" "$current" && hf=1 || true; fi
 
-if [[ "$active" != true ]]; then
-  if [[ "$now_sel" != "TUNNEL-BASE" ]]; then
-    log "outside shared window; switching new connections to TUNNEL-BASE"
-    set_group TUNNEL-BASE || die "failed to select TUNNEL-BASE"
-  fi
-  CURRENT_MODE="BASE"
-  BLOCKED_WINDOW=""
-  LAST_QUICK_PROBE=0
-  LAST_FULL_PROBE=0
-  save_state
-  exit 0
-fi
-
-# A failed F5 probe no longer blocks the whole window. Keep BASE and retry a
-# full isolated probe every RETRY_INTERVAL seconds until F5 becomes healthy.
-if [[ "$BLOCKED_WINDOW" == "$window_id" ]] && (( now_epoch - LAST_FULL_PROBE < RETRY_INTERVAL )); then
-  if [[ "$now_sel" != "TUNNEL-BASE" ]]; then
-    set_group TUNNEL-BASE || die "failed to keep BASE while waiting for retry"
-  fi
-  CURRENT_MODE="BASE"
-  save_state
-  log "F5 retry cooldown active for $window_id; keeping BASE"
-  exit 0
-fi
-
-if [[ "$now_sel" != "TUNNEL-SHARED" ]]; then
-  log "shared window $window_id active; running isolated F5 pre-activation probe"
-  LAST_FULL_PROBE=$now_epoch
-  if SHARED_ENV="$SHARED_ENV" "$PROBE"; then
-    log "F5 passed full probe; enabling TUNNEL-SHARED for NEW connections"
-    set_group TUNNEL-SHARED || die "F5 healthy but selector switch failed"
-    CURRENT_MODE="SHARED"
-    BLOCKED_WINDOW=""
-    LAST_QUICK_PROBE=$now_epoch
-    save_state
-    exit 0
-  else
-    log "F5 full probe failed; keeping BASE and retrying in ${RETRY_INTERVAL}s"
-    set_group TUNNEL-BASE || true
-    CURRENT_MODE="BASE"
-    BLOCKED_WINDOW="$window_id"
-    LAST_QUICK_PROBE=$now_epoch
-    save_state
-    exit 0
-  fi
-fi
-
-CURRENT_MODE="SHARED"
-if (( now_epoch - LAST_QUICK_PROBE >= QUICK_INTERVAL )); then
-  log "running active-window F5 quick health check"
-  if quick_probe; then
-    LAST_QUICK_PROBE=$now_epoch
-    save_state
-    log "F5 quick health = OK"
-  else
-    log "F5 became unhealthy; switching NEW connections to BASE and scheduling full retry"
-    set_group TUNNEL-BASE || die "F5 unhealthy and BASE failback failed"
-    CURRENT_MODE="BASE"
-    BLOCKED_WINDOW="$window_id"
-    LAST_FULL_PROBE=$now_epoch
-    LAST_QUICK_PROBE=$now_epoch
-    save_state
-  fi
+if [[ "$active" == true ]]; then
+  case "$ha$hb$hf" in
+    111) target=TUNNEL-SHARED ;;
+    110) target=TUNNEL-BASE ;;
+    101) target=SHARED-AF5 ;;
+    011) target=SHARED-BF5 ;;
+    100) target=BASE-A ;;
+    010) target=BASE-B ;;
+    001) target=SHARED-F5 ;;
+    000) target=REJECT ;;
+  esac
 else
-  save_state
+  case "$ha$hb" in
+    11) target=TUNNEL-BASE ;;
+    10) target=BASE-A ;;
+    01) target=BASE-B ;;
+    00) target=REJECT ;;
+  esac
 fi
+
+if [[ "$current" != "$target" ]]; then
+  log "health gate A=$ha B=$hb F5=$hf window=$active: $current -> $target"
+  set_group "$target" || die "failed to select healthy group $target"
+else
+  log "health gate A=$ha B=$hb F5=$hf window=$active: keeping $target"
+fi
+
+umask 077
+cat >"${STATE_FILE}.new" <<EOF
+CURRENT_GROUP=$(printf %q "$target")
+HEALTH_A=$ha
+HEALTH_B=$hb
+HEALTH_F5=$hf
+SHARED_WINDOW=$active
+LAST_CHECK=$(date +%s)
+EOF
+mv -f "${STATE_FILE}.new" "$STATE_FILE"
+chmod 0600 "$STATE_FILE"
