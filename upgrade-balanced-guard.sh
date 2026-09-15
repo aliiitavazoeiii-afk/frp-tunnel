@@ -25,6 +25,15 @@ python3 "$B/shared-node-render.py" "$D" "$E" "$T/config.yaml"
 chown anytls-tunnel:anytls-tunnel "$T/config.yaml"; chmod 0600 "$T/config.yaml"
 runuser -u anytls-tunnel -- "$M" -t -d "$C" -f "$T/config.yaml" >/dev/null || die "candidate config invalid; production untouched"
 
+log "Pre-activation isolated full probes; current production path is not changed during these tests"
+for n in a b shared; do
+  if bash "$B/node-full-probe.sh" "$n"; then
+    log "pre-probe $n = HEALTHY"
+  else
+    log "pre-probe $n = UNHEALTHY; guard will exclude it after activation"
+  fi
+done
+
 mkdir -p "$S/backups"
 BK=$S/backups/balanced-guard-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$BK"
 cp -a "$CFG" "$BK/config.yaml"
