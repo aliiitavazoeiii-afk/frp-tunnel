@@ -108,7 +108,7 @@ cp -a "$CONFIG" "$BACKUP/config.yaml"
 reload(){
   [[ "$(curl -sS -o "$TMP/r" -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT "$API/configs?force=true" -d '{"path":"/etc/anytls-tunnel/config.yaml","payload":""}' || true)" == 204 ]]
 }
-rollback(){ log "ROLLBACK: restoring shared config"; cp -a "$BACKUP/config.yaml" "$CONFIG"; chown anytls-tunnel:anytls-tunnel "$CONFIG"; chmod 0600 "$CONFIG"; reload || systemctl restart anytls-tunnel || true; }
+rollback(){ log "ROLLBACK: restoring shared config"; cp -a "$BACKUP/config.yaml" "$CONFIG"; chown anytls-tunnel:anytls-tunnel "$CONFIG"; chmod 0600 "$CONFIG"; reload || log "WARNING: rollback API reload failed; service was NOT restarted automatically"; }
 trap 'rc=$?; if ((rc!=0)); then rollback; fi; rm -rf "$TMP"' EXIT
 
 cp "$TMP/config.yaml" "$CONFIG"
