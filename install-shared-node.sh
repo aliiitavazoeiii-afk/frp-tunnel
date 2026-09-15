@@ -56,7 +56,7 @@ mkdir -p "$S/backups"
 BK=$S/backups/shared-node-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$BK"; cp -a "$CFG" "$BK/config.yaml"; cp -a "$D" "$BK/deploy.env"
 API=http://127.0.0.1:${LOCAL_CONTROLLER_PORT}; AUTH=(-H "Authorization: Bearer ${CONTROLLER_SECRET}")
 reload(){ [[ "$(curl -sS -o "$T/a" -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT "$API/configs?force=true" -d '{"path":"/etc/anytls-tunnel/config.yaml","payload":""}' || true)" == 204 ]]; }
-rollback(){ log "ROLLBACK to pre-shared config"; cp -a "$BK/config.yaml" "$CFG"; chown anytls-tunnel:anytls-tunnel "$CFG"; chmod 0600 "$CFG"; reload || systemctl restart anytls-tunnel || true; }
+rollback(){ log "ROLLBACK to pre-shared config"; cp -a "$BK/config.yaml" "$CFG"; chown anytls-tunnel:anytls-tunnel "$CFG"; chmod 0600 "$CFG"; reload || log "WARNING: rollback API reload failed; service was NOT restarted automatically"; }
 trap 'rc=$?; if ((rc!=0)); then rollback; fi; cleanup' EXIT
 
 install -m 0755 "$B/shared-node-probe.sh" /usr/local/sbin/anytls-shared-probe
