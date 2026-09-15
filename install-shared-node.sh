@@ -11,6 +11,8 @@ CFG=$C/config.yaml
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
+[[ $# -le 1 ]] || die "usage: sudo bash install-shared-node.sh [maya1|maya3]"
+profile="${1:-}"
 [[ -f $C/role && "$(tr -d '[:space:]' < $C/role)" == iran ]] || die "Iran role required"
 for f in "$D" "$CFG" "$B/shared-node-probe.sh" "$B/shared-node-scheduler.sh" "$B/shared-node-render.py" "$B/uninstall-shared-node.sh"; do [[ -f "$f" ]] || die "missing $f"; done
 for s in anytls-tunnel anytls-xudp-bridge x-ui; do systemctl is-active --quiet "$s" || die "$s inactive"; done
@@ -30,8 +32,11 @@ code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7891 --connect-timeout 8 --max-ti
 [[ "$code" == 204 ]] || die "current XUDP path unhealthy; production untouched"
 
 echo "Schedule: maya3=15:00-21:00, maya1=21:00-03:00, timezone=Asia/Tehran"
-read -r -p "This server [maya1/maya3]: " profile
-[[ "$profile" == maya1 || "$profile" == maya3 ]] || die "invalid profile"
+if [[ -z "$profile" ]]; then
+  read -r -p "This server [maya1/maya3]: " profile
+fi
+[[ "$profile" == maya1 || "$profile" == maya3 ]] || die "invalid profile: use maya1 or maya3"
+echo "Shared profile fixed to: $profile"
 read -r -p "F5 public IP/hostname: " addr
 [[ "$addr" =~ ^[A-Za-z0-9._:-]+$ ]] || die "invalid address"
 read -r -p "F5 cover [www.cloudflare.com]: " cover
