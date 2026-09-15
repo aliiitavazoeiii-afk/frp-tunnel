@@ -1,12 +1,13 @@
-# AnyTLS Tunnel v1.6.0 — FINAL x-ui + XUDP + remote-DNS mode
+# AnyTLS Tunnel v1.7.0 — FINAL x-ui + XUDP + remote-DNS + shared-F5 mode
 
-Production 3-node backend tunnel for an existing x-ui/Xray deployment:
+Production backend tunnel for an existing x-ui/Xray deployment:
 
 - Foreign A / F1: AnyTLS + ShadowTLS v3 on public TCP/443
 - Foreign B / F2: AnyTLS + ResTLS on public TCP/443
 - Iran: Mihomo sticky load-balance/failover backend
 - Mandatory XUDP compatibility bridge: pinned Xray v26.3.27
 - Existing x-ui/Xray remains user-facing on TCP/443 and keeps existing VLESS/REALITY users.
+- Optional shared F5: one additional Foreign A / ShadowTLS v3 node can be time-shared between `maya1` and `maya3`.
 
 ## Final proven Iran state
 
@@ -107,25 +108,61 @@ sudo anytls-tunnel-health
 
 ## Replace a filtered F1/F2
 
-First install the replacement Foreign server with the same role:
-
-```bash
-sudo bash setup-final.sh foreign-a
-```
-
-or:
-
-```bash
-sudo bash setup-final.sh foreign-b
-```
-
-Then on Iran:
+First install the replacement Foreign server with the same role, then run on Iran:
 
 ```bash
 sudo anytls-replace
 ```
 
-Choose F1 or F2 and enter the replacement node values. The replacement workflow probes the new node before activation and rolls back if activation fails. It does not change x-ui users, the public VLESS/REALITY inbound, the other Foreign node, or the final `sniffing + AsIs` x-ui state.
+The replacement workflow probes the new node before activation and rolls back if activation fails. It does not change x-ui users, the public VLESS/REALITY inbound, the other Foreign node, or the final `sniffing + AsIs` x-ui state.
+
+## Optional shared F5 scheduler
+
+Install F5 itself as another Foreign A / ShadowTLS v3 node:
+
+```bash
+sudo bash setup-final.sh foreign-a
+```
+
+Use `www.cloudflare.com` as the cover unless a separately validated cover is intentionally chosen. The same F5 credentials may be used by both Iran gateways.
+
+On each already-working Iran gateway, pull the current branch and run:
+
+```bash
+sudo bash install-shared-node.sh
+```
+
+Choose the profile:
+- `maya3`: F5 is eligible from 15:00 to 21:00 Asia/Tehran.
+- `maya1`: F5 is eligible from 21:00 to 03:00 Asia/Tehran.
+
+The installer is designed for live servers:
+- it does not restart x-ui or the XUDP bridge;
+- it first probes F5 in an isolated temporary Mihomo + Xray/XUDP path;
+- the probe checks TCP/443, gstatic, YouTube, `i.ytimg.com`, Instagram, a sustained HTTPS transfer, and a real UDP DNS round-trip over XUDP;
+- the candidate Mihomo configuration is validated before activation;
+- runtime reload uses the local Mihomo controller API;
+- immediately after reload, `TUNNEL` is pinned to `TUNNEL-BASE`, so F5 is not used just because it was installed;
+- the scheduler runs every minute, and F5 enters the pool only inside its assigned window after the full probe passes;
+- while active, F5 gets quick application health checks every five minutes;
+- on a health failure it is removed from new traffic for the rest of that time window.
+
+To avoid freezing existing user sessions, schedule transitions do not forcibly close old connections. New connections follow the new selector immediately; old sessions drain naturally.
+
+Useful commands:
+
+```bash
+sudo anytls-shared-probe
+sudo anytls-shared-scheduler
+systemctl status anytls-shared-scheduler.timer --no-pager
+journalctl -u anytls-shared-scheduler.service -n 100 --no-pager
+```
+
+Remove only the optional shared-F5 feature, preserving x-ui, XUDP and the normal F1+F2 path:
+
+```bash
+sudo anytls-shared-uninstall
+```
 
 ## Uninstall
 
@@ -134,6 +171,8 @@ Normal uninstall, preserving AnyTLS backups and `/root/anytls-*.env` for possibl
 ```bash
 sudo anytls-uninstall
 ```
+
+If the optional shared-F5 scheduler is installed, run `sudo anytls-shared-uninstall` first, then run the base uninstaller.
 
 Full purge of AnyTLS state/backups and role env files:
 
