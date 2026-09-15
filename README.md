@@ -1,15 +1,15 @@
-# AnyTLS Tunnel v1.7.0 — FINAL x-ui + XUDP + remote-DNS + shared-F5 mode
+# AnyTLS Tunnel v1.8.0 — x-ui + XUDP + remote-DNS + health-gated shared F5
 
 Production backend tunnel for an existing x-ui/Xray deployment:
 
 - Foreign A / F1: AnyTLS + ShadowTLS v3 on public TCP/443
 - Foreign B / F2: AnyTLS + ResTLS on public TCP/443
-- Iran: Mihomo sticky load-balance/failover backend
+- Iran: Mihomo health-gated load balancing behind Xray XUDP
 - Mandatory XUDP compatibility bridge: pinned Xray v26.3.27
 - Existing x-ui/Xray remains user-facing on TCP/443 and keeps existing VLESS/REALITY users.
-- Optional shared F5: one additional Foreign A / ShadowTLS v3 node can be time-shared between `maya1` and `maya3`.
+- Optional shared F5: one additional Foreign A / ShadowTLS v3 node time-shared between `maya1` and `maya3`.
 
-## Final proven Iran state
+## Final Iran state
 
 ```text
 Public x-ui inbound :443
@@ -28,9 +28,9 @@ x-ui outbound anytls-tunnel
 QUIC_SAFE_MODE = false
 ```
 
-Why `AsIs`: production testing showed some YouTube/Instagram CDN hostnames failed when locally resolved on the Iran server but worked immediately when the hostname was resolved through the proxy path. Sniffing recovers the hostname on the public inbound; `AsIs` preserves it into the local SOCKS/XUDP path so resolution happens remotely rather than through poisoned/local Iran DNS.
+`AsIs` is intentional: production tests showed selected YouTube/Instagram CDN hostnames failed when resolved locally on the Iran server but worked when the hostname was resolved through the proxy path.
 
-## Final traffic path
+## Traffic path
 
 ```text
 User
@@ -39,20 +39,18 @@ User
   -> SOCKS 127.0.0.1:7891, AsIs
   -> Xray XUDP bridge
   -> inner VLESS/XUDP over TCP
-  -> SOCKS 127.0.0.1:7890 (Mihomo AnyTLS carrier)
-  -> AnyTLS sticky A/B failover
-  -> Foreign A/B public TCP/443
+  -> SOCKS 127.0.0.1:7890 (Mihomo)
+  -> health-gated AnyTLS round-robin subset
+  -> Foreign node public TCP/443
   -> Foreign Xray XUDP endpoint 127.0.0.1:2443
   -> Internet
 ```
 
 No extra public XUDP port is opened. Foreign `2443`, Iran `7890`, `7891`, and `9090` are loopback-only.
 
-## Fresh installation
+## Fresh base installation
 
-Install in this order: Foreign A -> Foreign B -> Iran.
-
-On each fresh server:
+Install Foreign A, then Foreign B, then Iran.
 
 ```bash
 sudo rm -rf /opt/anytls-tunnel
@@ -60,139 +58,191 @@ sudo git clone -b anytls-v1.3.0 https://github.com/aliiitavazoeiii-afk/frp-tunne
 cd /opt/anytls-tunnel
 ```
 
-Foreign A / F1:
+Foreign A:
 
 ```bash
 sudo bash setup-final.sh foreign-a
 ```
 
-Foreign B / F2:
+Foreign B:
 
 ```bash
 sudo bash setup-final.sh foreign-b
 ```
 
-Iran, after x-ui/Xray already exists and the public VLESS/REALITY inbound is listening on TCP/443:
+Iran after x-ui already exists on public TCP/443:
 
 ```bash
 sudo bash setup-final.sh iran
 ```
 
-The final Iran installer enforces `QUIC_SAFE_MODE=false`, builds and validates XUDP, bootstraps the x-ui outbound/routing if missing, enables sniffing on only the public :443 inbound, switches the x-ui SOCKS outbound to `127.0.0.1:7891`, sets `targetStrategy=AsIs`, then runs the final health check.
-
-## Final health check
-
-On any node:
+Final base health:
 
 ```bash
 sudo anytls-final-health
 ```
 
-Iran validation includes:
+## Shared F5 schedule
 
-- `anytls-tunnel`, `anytls-xudp-bridge`, and `x-ui` service state
-- listeners `443`, `7890`, `7891`, `9090`
-- x-ui route to `anytls-tunnel`
-- `sniffing=ON`
-- `targetStrategy=AsIs`
-- real UDP DNS round-trip over XUDP
-- remote-resolution probes for gstatic, YouTube image CDN, and Instagram
-- per-node Mihomo controller health for F1/F2
+Install F5 as another Foreign A / ShadowTLS v3 node. The default validated cover is `www.cloudflare.com`.
 
-Legacy helpers remain available where installed:
+On `maya1`:
 
 ```bash
-sudo anytls-xudp-health
-sudo anytls-tunnel-health
+sudo bash install-shared-node.sh maya1
 ```
 
-## Replace a filtered F1/F2
+On `maya3`:
 
-First install the replacement Foreign server with the same role, then run on Iran:
+```bash
+sudo bash install-shared-node.sh maya3
+```
+
+Schedule uses `Asia/Tehran`:
+
+```text
+maya3: 15:00 -> 21:00
+maya1: 21:00 -> 03:00
+03:00 -> 15:00: F5 idle
+```
+
+## v1.8.0 health-gated balancing
+
+The active pool is no longer a fixed sticky group. Healthy multi-node subsets use `strategy: round-robin` so new requests are distributed across the currently healthy nodes.
+
+Prepared subsets include:
+
+```text
+TUNNEL-BASE   = A + B
+BASE-A        = A only
+BASE-B        = B only
+TUNNEL-SHARED = A + B + F5
+SHARED-AF5    = A + F5
+SHARED-BF5    = B + F5
+SHARED-F5     = F5 only
+REJECT        = fail closed if no node is healthy
+```
+
+Every minute, each eligible node is checked separately from the Iran gateway against:
+
+- `www.gstatic.com/generate_204`
+- `www.youtube.com`
+- `i.ytimg.com`
+- `www.instagram.com`
+
+A failed application test is retried once. A node that fails twice is excluded from new traffic. If it had active Mihomo connections, only those connections using that failed node are closed so applications reconnect through the remaining healthy subset.
+
+Before a previously excluded node is allowed back into traffic, it must first pass a full isolated probe:
+
+- public TCP/443
+- AnyTLS / ShadowTLS or ResTLS
+- inner XUDP path
+- gstatic / YouTube / ytimg / Instagram
+- sustained HTTPS transfer
+- UDP DNS round-trip over XUDP
+
+Mihomo policy groups also keep an independent 15-second `gstatic` health check with `expected-status: 204` as a second safety layer.
+
+The scheduler changes only the local Mihomo selector. It does not restart x-ui or the XUDP bridge.
+
+### Live upgrade from v1.7.x
+
+On an already-working Iran gateway with shared F5 installed:
+
+```bash
+cd /opt/anytls-tunnel
+sudo git fetch origin
+sudo git checkout anytls-v1.3.0
+sudo git pull --ff-only origin anytls-v1.3.0
+cat VERSION
+sudo bash upgrade-balanced-guard.sh
+```
+
+Expected version:
+
+```text
+1.8.0
+```
+
+Useful checks:
+
+```bash
+cat /var/lib/anytls-tunnel/shared-node.state
+systemctl status anytls-shared-scheduler.timer --no-pager
+journalctl -u anytls-shared-scheduler.service -n 100 --no-pager
+```
+
+Current selector:
+
+```bash
+set -a
+source /etc/anytls-tunnel/deploy.env
+set +a
+curl -sS -H "Authorization: Bearer $CONTROLLER_SECRET" \
+  "http://127.0.0.1:$LOCAL_CONTROLLER_PORT/proxies/TUNNEL" | jq '{type,now,all}'
+```
+
+Current active connection distribution:
+
+```bash
+curl -sS -H "Authorization: Bearer $CONTROLLER_SECRET" \
+  "http://127.0.0.1:$LOCAL_CONTROLLER_PORT/connections" | jq '{
+  foreign_a: [.connections[] | select(.chains | index("foreign-a-shadowtls"))] | length,
+  foreign_b: [.connections[] | select(.chains | index("foreign-b-restls"))] | length,
+  foreign_shared: [.connections[] | select(.chains | index("foreign-shared-shadowtls"))] | length,
+  total: (.connections | length)
+}'
+```
+
+Existing healthy connections are not force-rebalanced during an upgrade, so connection counts can remain skewed until old sessions naturally close. New requests follow round-robin immediately. A failed node is treated differently: its existing Mihomo connections are drained to avoid leaving users frozen on that route.
+
+## Node probes
+
+Shared F5 full probe:
+
+```bash
+sudo anytls-shared-probe
+```
+
+Full isolated probe of any configured node:
+
+```bash
+sudo anytls-node-full-probe a
+sudo anytls-node-full-probe b
+sudo anytls-node-full-probe shared
+```
+
+## Replace a filtered base node
+
+Install the replacement Foreign server with the same role, then on Iran:
 
 ```bash
 sudo anytls-replace
 ```
 
-The replacement workflow probes the new node before activation and rolls back if activation fails. It does not change x-ui users, the public VLESS/REALITY inbound, the other Foreign node, or the final `sniffing + AsIs` x-ui state.
+The replacement workflow probes the new node before activation and does not modify x-ui users or the public VLESS/REALITY inbound.
 
-## Optional shared F5 scheduler
-
-Install F5 itself as another Foreign A / ShadowTLS v3 node:
-
-```bash
-sudo bash setup-final.sh foreign-a
-```
-
-Use `www.cloudflare.com` as the cover unless a separately validated cover is intentionally chosen. The same F5 credentials may be used by both Iran gateways.
-
-On each already-working Iran gateway, pull the current branch and run:
-
-```bash
-sudo bash install-shared-node.sh
-```
-
-Choose the profile:
-- `maya3`: F5 is eligible from 15:00 to 21:00 Asia/Tehran.
-- `maya1`: F5 is eligible from 21:00 to 03:00 Asia/Tehran.
-
-The installer is designed for live servers:
-- it does not restart x-ui or the XUDP bridge;
-- it first probes F5 in an isolated temporary Mihomo + Xray/XUDP path;
-- the probe checks TCP/443, gstatic, YouTube, `i.ytimg.com`, Instagram, a sustained HTTPS transfer, and a real UDP DNS round-trip over XUDP;
-- the candidate Mihomo configuration is validated before activation;
-- runtime reload uses the local Mihomo controller API;
-- immediately after reload, `TUNNEL` is pinned to `TUNNEL-BASE`, so F5 is not used just because it was installed;
-- the scheduler runs every minute, and F5 enters the pool only inside its assigned window after the full probe passes;
-- while active, F5 gets quick application health checks every five minutes;
-- on a health failure it is removed from new traffic for the rest of that time window.
-
-To avoid freezing existing user sessions, schedule transitions do not forcibly close old connections. New connections follow the new selector immediately; old sessions drain naturally.
-
-Useful commands:
-
-```bash
-sudo anytls-shared-probe
-sudo anytls-shared-scheduler
-systemctl status anytls-shared-scheduler.timer --no-pager
-journalctl -u anytls-shared-scheduler.service -n 100 --no-pager
-```
-
-Remove only the optional shared-F5 feature, preserving x-ui, XUDP and the normal F1+F2 path:
+## Remove shared F5 only
 
 ```bash
 sudo anytls-shared-uninstall
 ```
 
-## Uninstall
-
-Normal uninstall, preserving AnyTLS backups and `/root/anytls-*.env` for possible reinstall:
+## Remove AnyTLS/XUDP project
 
 ```bash
 sudo anytls-uninstall
 ```
 
-If the optional shared-F5 scheduler is installed, run `sudo anytls-shared-uninstall` first, then run the base uninstaller.
-
-Full purge of AnyTLS state/backups and role env files:
+Full purge:
 
 ```bash
 sudo anytls-uninstall --purge
 ```
 
-On Iran, uninstall keeps x-ui and all x-ui users. It removes only the `anytls-tunnel` outbound/routing owned by this project, then removes AnyTLS/XUDP services and files. A safety copy of the x-ui DB is written under `/root/` before the x-ui cleanup. Public inbound sniffing is intentionally left unchanged because it is an x-ui inbound setting and may be useful independently.
-
-Foreign firewall/provider TCP/443 allow rules are intentionally not deleted automatically because that port may be reused.
-
-## Compatibility history
-
-The project originally used direct SOCKS UDP through Mihomo/AnyTLS. Real UDP return traffic failed on some deployments. Adding an Xray XUDP bridge fixed Google/YouTube compatibility for NPV Tunnel. Later production testing showed that `ForceIPv4` caused local Iran DNS resolution for some CDN hostnames; `sniffing=ON + targetStrategy=AsIs` fixed YouTube/Instagram CDN resolution by preserving hostnames for remote resolution.
-
-See `XUDP-COMPATIBILITY-FIX.md` for the earlier XUDP diagnosis.
+On Iran, the base uninstaller keeps x-ui and its users.
 
 ## Pinned versions
 
 - Mihomo `v1.19.30`
 - Xray `v26.3.27`
-
-Candidate configs are validated before activation and downloaded binaries are SHA-256 verified.
