@@ -1,4 +1,4 @@
-# AnyTLS Tunnel v1.5.0 — FINAL x-ui + XUDP mode
+# AnyTLS Tunnel v1.6.0 — FINAL x-ui + XUDP + remote-DNS mode
 
 Production 3-node backend tunnel for an existing x-ui/Xray deployment:
 
@@ -6,46 +6,52 @@ Production 3-node backend tunnel for an existing x-ui/Xray deployment:
 - Foreign B / F2: AnyTLS + ResTLS on public TCP/443
 - Iran: Mihomo sticky load-balance/failover backend
 - Mandatory XUDP compatibility bridge: pinned Xray v26.3.27
-- Existing x-ui/Xray remains user-facing on TCP/443 and keeps the existing VLESS/REALITY users.
+- Existing x-ui/Xray remains user-facing on TCP/443 and keeps existing VLESS/REALITY users.
+
+## Final proven Iran state
+
+```text
+Public x-ui inbound :443
+  sniffing.enabled = true
+  destOverride = http,tls,quic,fakedns
+
+x-ui outbound anytls-tunnel
+  protocol = socks
+  target = 127.0.0.1:7891
+  targetStrategy = AsIs
+  mux.enabled = false
+
+7891 = Xray XUDP bridge
+7890 = Mihomo AnyTLS carrier
+9090 = Mihomo controller
+QUIC_SAFE_MODE = false
+```
+
+Why `AsIs`: production testing showed some YouTube/Instagram CDN hostnames failed when locally resolved on the Iran server but worked immediately when the hostname was resolved through the proxy path. Sniffing recovers the hostname on the public inbound; `AsIs` preserves it into the local SOCKS/XUDP path so resolution happens remotely rather than through poisoned/local Iran DNS.
 
 ## Final traffic path
 
 ```text
 User
   -> x-ui/Xray Iran :443
-  -> 127.0.0.1:7891 (Xray XUDP bridge)
+  -> sniff hostname
+  -> SOCKS 127.0.0.1:7891, AsIs
+  -> Xray XUDP bridge
   -> inner VLESS/XUDP over TCP
-  -> 127.0.0.1:7890 (Mihomo carrier)
+  -> SOCKS 127.0.0.1:7890 (Mihomo AnyTLS carrier)
   -> AnyTLS sticky A/B failover
-  -> Foreign A/B :443
-  -> 127.0.0.1:2443 (Foreign Xray XUDP endpoint)
+  -> Foreign A/B public TCP/443
+  -> Foreign Xray XUDP endpoint 127.0.0.1:2443
   -> Internet
 ```
 
 No extra public XUDP port is opened. Foreign `2443`, Iran `7890`, `7891`, and `9090` are loopback-only.
 
-## Why XUDP is mandatory
-
-A production compatibility failure was confirmed where direct SOCKS UDP through Mihomo/AnyTLS sent UDP requests but failed to return replies. This caused Google/YouTube failures in NPV Tunnel even when older v2ray/XHTTP paths worked.
-
-The proven fix is:
-
-```json
-{
-  "enabled": true,
-  "concurrency": -1,
-  "xudpConcurrency": 16,
-  "xudpProxyUDP443": "allow"
-}
-```
-
-See `XUDP-COMPATIBILITY-FIX.md` for the full diagnosis.
-
-## Final fresh installation
+## Fresh installation
 
 Install in this order: Foreign A -> Foreign B -> Iran.
 
-On every fresh server:
+On each fresh server:
 
 ```bash
 sudo rm -rf /opt/anytls-tunnel
@@ -53,70 +59,101 @@ sudo git clone -b anytls-v1.3.0 https://github.com/aliiitavazoeiii-afk/frp-tunne
 cd /opt/anytls-tunnel
 ```
 
-Foreign A:
+Foreign A / F1:
 
 ```bash
 sudo bash setup-final.sh foreign-a
 ```
 
-Foreign B:
+Foreign B / F2:
 
 ```bash
 sudo bash setup-final.sh foreign-b
 ```
 
-Iran, after x-ui/Xray already exists on public TCP/443:
+Iran, after x-ui/Xray already exists and the public VLESS/REALITY inbound is listening on TCP/443:
 
 ```bash
 sudo bash setup-final.sh iran
 ```
 
-The Iran installer performs TCP + real UDP/XUDP validation before switching x-ui to `127.0.0.1:7891`.
+The final Iran installer enforces `QUIC_SAFE_MODE=false`, builds and validates XUDP, bootstraps the x-ui outbound/routing if missing, enables sniffing on only the public :443 inbound, switches the x-ui SOCKS outbound to `127.0.0.1:7891`, sets `targetStrategy=AsIs`, then runs the final health check.
 
-## Health
+## Final health check
+
+On any node:
+
+```bash
+sudo anytls-final-health
+```
+
+Iran validation includes:
+
+- `anytls-tunnel`, `anytls-xudp-bridge`, and `x-ui` service state
+- listeners `443`, `7890`, `7891`, `9090`
+- x-ui route to `anytls-tunnel`
+- `sniffing=ON`
+- `targetStrategy=AsIs`
+- real UDP DNS round-trip over XUDP
+- remote-resolution probes for gstatic, YouTube image CDN, and Instagram
+- per-node Mihomo controller health for F1/F2
+
+Legacy helpers remain available where installed:
 
 ```bash
 sudo anytls-xudp-health
 sudo anytls-tunnel-health
 ```
 
-## Replace filtered F1/F2
+## Replace a filtered F1/F2
 
-First install the new Foreign server using the same final role installer. Then on Iran run:
+First install the replacement Foreign server with the same role:
+
+```bash
+sudo bash setup-final.sh foreign-a
+```
+
+or:
+
+```bash
+sudo bash setup-final.sh foreign-b
+```
+
+Then on Iran:
 
 ```bash
 sudo anytls-replace
 ```
 
-Choose F1 or F2 and enter the new server IP/hostname, cover hostname, and credentials printed by the new Foreign installer.
+Choose F1 or F2 and enter the replacement node values. The replacement workflow probes the new node before activation and rolls back if activation fails. It does not change x-ui users, the public VLESS/REALITY inbound, the other Foreign node, or the final `sniffing + AsIs` x-ui state.
 
-`anytls-replace` probes the new node through an isolated temporary AnyTLS + XUDP path and requires both HTTP 204 and a real UDP DNS round-trip before production is changed. If activation fails, the previous production config/env is restored.
+## Uninstall
 
-It does not change x-ui users, the public inbound, the XUDP bridge, or the other Foreign node.
-
-## Existing older deployment
-
-For an already installed v1.3.x/v1.4.x deployment, the XUDP compatibility upgrade remains:
+Normal uninstall, preserving AnyTLS backups and `/root/anytls-*.env` for possible reinstall:
 
 ```bash
-sudo bash upgrade-xudp-v3.sh foreign-a
-sudo bash upgrade-xudp-v3.sh foreign-b
-sudo bash upgrade-xudp-v3.sh iran
+sudo anytls-uninstall
 ```
 
-Then install the replacement command on Iran:
+Full purge of AnyTLS state/backups and role env files:
 
 ```bash
-sudo install -m 0755 replace-node.sh /usr/local/sbin/anytls-replace
+sudo anytls-uninstall --purge
 ```
+
+On Iran, uninstall keeps x-ui and all x-ui users. It removes only the `anytls-tunnel` outbound/routing owned by this project, then removes AnyTLS/XUDP services and files. A safety copy of the x-ui DB is written under `/root/` before the x-ui cleanup. Public inbound sniffing is intentionally left unchanged because it is an x-ui inbound setting and may be useful independently.
+
+Foreign firewall/provider TCP/443 allow rules are intentionally not deleted automatically because that port may be reused.
+
+## Compatibility history
+
+The project originally used direct SOCKS UDP through Mihomo/AnyTLS. Real UDP return traffic failed on some deployments. Adding an Xray XUDP bridge fixed Google/YouTube compatibility for NPV Tunnel. Later production testing showed that `ForceIPv4` caused local Iran DNS resolution for some CDN hostnames; `sniffing=ON + targetStrategy=AsIs` fixed YouTube/Instagram CDN resolution by preserving hostnames for remote resolution.
+
+See `XUDP-COMPATIBILITY-FIX.md` for the earlier XUDP diagnosis.
 
 ## Pinned versions
 
 - Mihomo `v1.19.30`
 - Xray `v26.3.27`
 
-Candidate configs are validated before activation and binaries are SHA-256 verified.
-
-## Full operational documentation
-
-Read `FINAL-RUNBOOK.md` for fresh installation, recovery, replacement, and non-regression rules.
+Candidate configs are validated before activation and downloaded binaries are SHA-256 verified.
