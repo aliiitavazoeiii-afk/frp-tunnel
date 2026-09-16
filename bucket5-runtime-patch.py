@@ -7,9 +7,14 @@ if len(sys.argv) != 2:
 p = Path(sys.argv[1])
 s = p.read_text()
 
-# Candidate validation runs as the unprivileged anytls-tunnel user. Ensure the
-# rendered directory is traversable/readable by that user even when the parent
-# temp tree was created under umask 077.
+# The installer temp tree is created under umask 077. Candidate validation runs
+# as the unprivileged anytls-tunnel user, so grant traverse permission only to
+# that service group while keeping secret files themselves mode 0600.
+old_tmp = 'T=$(mktemp -d /tmp/anytls-bucket5-install.XXXXXX)\nchmod 0700 "$T"\n'
+new_tmp = 'T=$(mktemp -d /tmp/anytls-bucket5-install.XXXXXX)\nchgrp anytls-tunnel "$T"\nchmod 0750 "$T"\n'
+if old_tmp in s:
+    s = s.replace(old_tmp, new_tmp, 1)
+
 needle = 'python3 "$B/bucket5-render.py" "$D" "$TE" "$XUDP_UUID" "$T/rendered"\n'
 if needle not in s:
     raise SystemExit("ERROR: render marker not found")
