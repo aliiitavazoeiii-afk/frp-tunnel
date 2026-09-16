@@ -6,7 +6,7 @@ DB=Path("/etc/x-ui/x-ui.db")
 RUNTIME=Path("/usr/local/x-ui/bin/config.json")
 MAP=Path("/var/lib/anytls-tunnel/bucket5-users.json")
 BUCKETS=10
-XUDP_BASE=8101
+XUDP_BASE=18101
 LEGACY_PORT=7891
 
 def fail(msg):
