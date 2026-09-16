@@ -18,12 +18,31 @@ import os
 from pathlib import Path
 p=Path(os.environ['RUNTIME'])
 s=p.read_text()
+
+# Fresh-five: never reuse old Foreign addresses/credentials.
 start=s.find('if [[ "$PROFILE" == maya1 ]]; then')
 end=s.find('\nprompt_node(){', start)
 if start < 0 or end < 0:
     raise SystemExit('ERROR: could not locate credential-reuse block; refusing to run')
 replacement='log "FRESH-FIVE mode: ignoring all previous Foreign node addresses/credentials; F1..F5 will be entered explicitly"\n'
 s=s[:start]+replacement+s[end:]
+
+# Actual five-node topology installed by the user:
+# F1/F2/F3 = foreign-a (ShadowTLS), F4/F5 = foreign-b (ResTLS).
+old='TYPE[F1]=shadow; TYPE[F2]=restls; TYPE[F3]=shadow; TYPE[F4]=restls; TYPE[F5]=shadow'
+new='TYPE[F1]=shadow; TYPE[F2]=shadow; TYPE[F3]=shadow; TYPE[F4]=restls; TYPE[F5]=restls'
+if old not in s:
+    raise SystemExit('ERROR: expected node-type declaration not found; refusing to run')
+s=s.replace(old,new,1)
+
+# Covers intentionally alternate independently of transport type:
+# F1 cloudflare, F2 microsoft, F3 cloudflare, F4 microsoft, F5 cloudflare.
+old_cover='[[ "${TYPE[$n]}" == shadow ]] && default_cover=www.cloudflare.com || default_cover=www.microsoft.com'
+new_cover='case "$n" in F1|F3|F5) default_cover=www.cloudflare.com ;; F2|F4) default_cover=www.microsoft.com ;; esac'
+if old_cover not in s:
+    raise SystemExit('ERROR: expected cover-default declaration not found; refusing to run')
+s=s.replace(old_cover,new_cover,1)
+
 p.write_text(s)
 PY
 chmod 0700 "$R"
@@ -31,6 +50,8 @@ chmod 0700 "$R"
 echo "============================================================"
 echo "Bucket5 FRESH-FIVE migration"
 echo "Profile: $PROFILE"
+echo "Topology: F1/F2/F3=ShadowTLS, F4/F5=ResTLS"
+echo "Covers:   F1/F3/F5=Cloudflare, F2/F4=Microsoft"
 echo "All F1..F5 addresses and credentials will be requested anew."
 echo "Existing x-ui users/UUIDs are preserved."
 echo "============================================================"
