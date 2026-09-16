@@ -7,12 +7,22 @@ E=${BUCKET5_ENV:-$C/bucket5.env}
 M=/usr/local/bin/mihomo-$P
 X=/usr/local/lib/$P/xray-v26.3.27
 NODE=${1:-}
-MPORT=${BUCKET5_PROBE_MIHOMO_PORT:-17890}
-XPORT=${BUCKET5_PROBE_XRAY_PORT:-17891}
+MPORT=${BUCKET5_PROBE_MIHOMO_PORT:-}
+XPORT=${BUCKET5_PROBE_XRAY_PORT:-}
 XUDP_SERVER_PORT=${XUDP_SERVER_PORT:-2443}
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
+
+pick_free_port(){
+  python3 <<'PY'
+import socket
+s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
 [[ "$NODE" =~ ^F[1-5]$ ]] || die "usage: anytls-bucket5-probe F1|F2|F3|F4|F5"
@@ -20,7 +30,16 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ -x "$M" ]] || die "missing Mihomo"
 [[ -x "$X" ]] || die "missing Xray"
 [[ -f "$C/xudp-bridge.json" ]] || die "missing XUDP bridge config"
+command -v python3 >/dev/null 2>&1 || die "python3 missing"
 source "$E"
+
+# Probe ports are ephemeral by default so a stale/parallel diagnostic process
+# cannot break installation or health recovery. Explicit env overrides remain
+# available for debugging and are still checked for conflicts below.
+[[ -n "$MPORT" ]] || MPORT=$(pick_free_port)
+[[ -n "$XPORT" ]] || XPORT=$(pick_free_port)
+while [[ "$XPORT" == "$MPORT" ]]; do XPORT=$(pick_free_port); done
+[[ "$MPORT" =~ ^[0-9]+$ && "$XPORT" =~ ^[0-9]+$ ]] || die "invalid probe ports"
 
 idx=${NODE#F}
 for suffix in ADDR TYPE COVER ANYTLS LAYER; do
@@ -50,6 +69,7 @@ trap cleanup EXIT
 for p in "$MPORT" "$XPORT"; do
   ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . && die "probe port $p is busy"
 done
+log "$NODE: isolated probe ports mihomo=$MPORT xray=$XPORT"
 
 log "$NODE: TCP/443 reachability"
 timeout 6 bash -c "exec 3<>/dev/tcp/${ADDR}/443" 2>/dev/null || die "$NODE TCP/443 unreachable"
