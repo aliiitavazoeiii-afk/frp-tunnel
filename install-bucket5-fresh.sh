@@ -43,6 +43,17 @@ if old_cover not in s:
     raise SystemExit('ERROR: expected cover-default declaration not found; refusing to run')
 s=s.replace(old_cover,new_cover,1)
 
+# install-bucket5.sh creates the install temp directory as root:0700, then
+# validates the rendered Mihomo candidate as the unprivileged anytls-tunnel
+# service account. Grant traverse access only to that service group for the
+# validation directory; keep the rendered YAML itself mode 0600 and owned by
+# the service user. Without this, a valid candidate is falsely reported invalid.
+old_validate='''python3 "$B/bucket5-render.py" "$D" "$TE" "$XUDP_UUID" "$T/rendered"\nchown anytls-tunnel:anytls-tunnel "$T/rendered/mihomo.yaml"\nchmod 0600 "$T/rendered/mihomo.yaml"\nrunuser -u anytls-tunnel -- "$M" -t -d "$C" -f "$T/rendered/mihomo.yaml" >/dev/null || die "candidate Mihomo config invalid"'''
+new_validate='''python3 "$B/bucket5-render.py" "$D" "$TE" "$XUDP_UUID" "$T/rendered"\nchgrp anytls-tunnel "$T" "$T/rendered"\nchmod 0750 "$T" "$T/rendered"\nchown anytls-tunnel:anytls-tunnel "$T/rendered/mihomo.yaml"\nchmod 0600 "$T/rendered/mihomo.yaml"\nif ! runuser -u anytls-tunnel -- "$M" -t -d "$C" -f "$T/rendered/mihomo.yaml" >"$T/mihomo-validate.log" 2>&1; then\n  tail -n 80 "$T/mihomo-validate.log" >&2 || true\n  die "candidate Mihomo config invalid"\nfi'''
+if old_validate not in s:
+    raise SystemExit('ERROR: expected candidate validation block not found; refusing to run')
+s=s.replace(old_validate,new_validate,1)
+
 p.write_text(s)
 PY
 chmod 0700 "$R"
