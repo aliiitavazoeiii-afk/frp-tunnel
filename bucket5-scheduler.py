@@ -35,8 +35,7 @@ def load_env(path):
 
 def default_state(profile):
     mapping={}
-    for i,b in enumerate(BUCKETS):
-        mapping[b]=NODES[i//2]
+    for i,b in enumerate(BUCKETS): mapping[b]=NODES[i//2]
     return {
         "version":1,"profile":profile,"mapping":mapping,
         "health":{n:True for n in NODES},
@@ -51,10 +50,8 @@ def read_state(profile):
     if STATE.exists():
         try:
             s=json.loads(STATE.read_text())
-            if s.get("profile")==profile and all(b in s.get("mapping",{}) for b in BUCKETS):
-                return s
-        except Exception:
-            pass
+            if s.get("profile")==profile and all(b in s.get("mapping",{}) for b in BUCKETS): return s
+        except Exception: pass
     return default_state(profile)
 
 def save_state(s):
@@ -73,8 +70,7 @@ class API:
             body=json.dumps(data).encode(); headers["Content-Type"]="application/json"
         r=Request(self.base+path,data=body,headers=headers,method=method)
         with urlopen(r,timeout=timeout) as resp:
-            raw=resp.read()
-            return json.loads(raw) if raw else None
+            raw=resp.read(); return json.loads(raw) if raw else None
     def get(self,path,timeout=12): return self.req(path,timeout=timeout)
     def put(self,path,data): return self.req(path,"PUT",data)
     def delete(self,path): return self.req(path,"DELETE")
@@ -84,8 +80,7 @@ class API:
         try:
             obj=self.get(f"/proxies/{quote(node,safe='')}/delay?{qs}",timeout=10)
             return isinstance(obj,dict) and isinstance(obj.get("delay"),(int,float))
-        except Exception:
-            return False
+        except Exception: return False
 
 def quick_health(api,node):
     tests=[
@@ -101,13 +96,19 @@ def full_probe(node):
         if p.returncode==0:
             log(f"{node} full recovery probe = OK"); return True
         log(f"{node} full recovery probe = FAIL: {p.stdout[-500:].strip()}")
-    except Exception as e:
-        log(f"{node} full recovery probe exception: {e}")
+    except Exception as e: log(f"{node} full recovery probe exception: {e}")
     return False
 
-def bucket_from_chain(chains):
-    for x in chains or []:
+def bucket_from_conn(c):
+    for x in c.get("chains") or []:
         if x in BUCKETS: return x
+    name=str((c.get("metadata") or {}).get("inboundName") or "")
+    if name.startswith("bucket-") and name.endswith("-carrier"):
+        mid=name[len("bucket-"):-len("-carrier")]
+        try:
+            b=f"BUCKET-{int(mid):02d}"
+            if b in BUCKETS: return b
+        except Exception: pass
     return None
 
 def sample_connections(api,s,now):
@@ -119,7 +120,7 @@ def sample_connections(api,s,now):
         cid=str(c.get("id",""))
         if not cid: continue
         total=int(c.get("upload") or 0)+int(c.get("download") or 0); cur[cid]=total
-        b=bucket_from_chain(c.get("chains"))
+        b=bucket_from_conn(c)
         if not b: continue
         active[b]+=1
         if cid in prev and total>=int(prev[cid]): bucket_bytes[b]+=total-int(prev[cid])
@@ -128,7 +129,7 @@ def sample_connections(api,s,now):
     return conns,bps,active,dt>0
 
 def drain_bucket(api,conns,bucket):
-    ids=[str(c["id"]) for c in conns if c.get("id") and bucket_from_chain(c.get("chains"))==bucket]
+    ids=[str(c["id"]) for c in conns if c.get("id") and bucket_from_conn(c)==bucket]
     closed=0
     for cid in ids:
         try: api.delete(f"/connections/{quote(cid,safe='')}"); closed+=1
@@ -247,5 +248,4 @@ def main():
     summary=" ".join(f"{n}:{counts[n]}b/{loads[n]['bps']/125000:.1f}Mbps/{loads[n]['active']}c/{'UP' if s['health'][n] else 'DOWN'}" for n in NODES)
     log("STATE "+summary)
 
-if __name__=="__main__":
-    main()
+if __name__=="__main__": main()
