@@ -1,3 +1,14 @@
+# ⚠️ Bucket5 continuation context
+
+This branch contains a newer Bucket5 production architecture than the legacy v1.8.0 documentation below. Before any production work, read:
+
+- [`ANYTLS-PROJECT-HISTORY.md`](./ANYTLS-PROJECT-HISTORY.md) — complete verified project history, current Bucket5 architecture, incidents, safety invariants, and pending design work.
+- [`NEW-CHAT-PROMPT.md`](./NEW-CHAT-PROMPT.md) — copy/paste continuation prompt for a fresh ChatGPT session.
+
+The legacy README below is retained for historical context. **Do not treat its topology/ports as the canonical Bucket5 state.** Current branch code + live deployment state are authoritative.
+
+---
+
 # AnyTLS Tunnel v1.8.0 — x-ui + XUDP + remote-DNS + health-gated shared F5
 
 Production backend tunnel for an existing x-ui/Xray deployment:
