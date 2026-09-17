@@ -18,6 +18,7 @@ The existing inner XUDP endpoint remains `127.0.0.1:2443` on the Foreign node.
 ## Canary ports
 
 - ResTLS: TCP/443 (existing retired F4 service)
+- ResTLS port-control: TCP/8442 (same transport/credentials, used to separate port effects from transport effects)
 - ShadowTLS v3: TCP/8443
 - VLESS + REALITY: TCP/8444
 
@@ -37,7 +38,9 @@ the Bucket5 scheduler.
 
 ## A/B workflow
 
-Run isolated single probes first, then repeated measurements. Each probe tests:
+Run isolated single probes first, then repeated measurements. Compare `restls`
+and `restls_alt` before attributing a difference to transport: if only TCP/443
+fails, port/path state remains a plausible variable. Each probe tests:
 
 1. raw TCP to that carrier port,
 2. direct carrier HTTP without XUDP,
@@ -51,9 +54,11 @@ failure stage without recording credentials.
 
 ## Interpretation
 
-- ResTLS failing while ShadowTLS/REALITY succeed on the same IP and time window
-  supports transport-specific classification/interference and justifies
-  transport-aware failover.
+- Both ResTLS ports failing while ShadowTLS/REALITY succeed on the same IP and
+  time window is stronger evidence for transport-specific classification than a
+  single-port comparison.
+- ResTLS:443 failing while `restls_alt` succeeds means port/path/flow state is
+  still a material variable and should not be mislabeled as protocol-only.
 - Similar failure rates across all carriers on the same IP shifts suspicion
   toward IP/path/provider-level interference.
 - These observations still do not identify which administrative network is
