@@ -9,6 +9,7 @@ ENV_PRIMARY=/root/anytls-foreign-b.env
 ENV_FALLBACK=$C/deploy.env
 ADDR=${1:-}
 ACK=${2:-}
+RESTLS_ALT_PORT=${RESTLS_ALT_PORT:-8442}
 SHADOW_PORT=${SHADOW_PORT:-8443}
 REALITY_PORT=${REALITY_PORT:-8444}
 
@@ -38,7 +39,7 @@ SHADOW_COVER=${SHADOW_COVER:-$COVER_HOST_B}
 REALITY_COVER=${REALITY_COVER:-$COVER_HOST_B}
 [[ "$SHADOW_COVER" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid SHADOW_COVER"
 [[ "$REALITY_COVER" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid REALITY_COVER"
-for p in "$SHADOW_PORT" "$REALITY_PORT"; do
+for p in "$RESTLS_ALT_PORT" "$SHADOW_PORT" "$REALITY_PORT"; do
   [[ "$p" =~ ^[0-9]+$ ]] && ((p>=1 && p<=65535)) || die "invalid port $p"
   if ss -H -ltn "sport = :$p" 2>/dev/null | grep -q .; then
     ss -ltnp "sport = :$p" >&2 || true
@@ -75,6 +76,17 @@ listeners:
     type: anytls
     listen: 0.0.0.0
     port: 443
+    users:
+      tunnel: "${ANYTLS_PASS_B}"
+    res-tls:
+      enable: true
+      dest: "${COVER_HOST_B}:443"
+      password: "${RESTLS_PASS_B}"
+
+  - name: anytls-restls-port-control
+    type: anytls
+    listen: 0.0.0.0
+    port: ${RESTLS_ALT_PORT}
     users:
       tunnel: "${ANYTLS_PASS_B}"
     res-tls:
@@ -143,13 +155,13 @@ log "Activating canary listeners with one controlled Mihomo restart"
 systemctl restart "$P"
 sleep 2
 systemctl is-active --quiet "$P" || { journalctl -u "$P" -n 100 --no-pager >&2 || true; die "Mihomo failed after activation"; }
-for p in 443 "$SHADOW_PORT" "$REALITY_PORT"; do
+for p in 443 "$RESTLS_ALT_PORT" "$SHADOW_PORT" "$REALITY_PORT"; do
   ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || { journalctl -u "$P" -n 100 --no-pager >&2 || true; die "listener TCP/$p missing"; }
 done
 ss -H -ltn "sport = :2443" 2>/dev/null | grep -q '127.0.0.1:2443' || die "XUDP loopback :2443 missing"
 
 CLIENT=/root/bucket5-f4-canary-client.json
-export ADDR COVER_HOST_B ANYTLS_PASS_B RESTLS_PASS_B SHADOW_PORT SHADOW_COVER SHADOW_ANYTLS SHADOW_LAYER
+export ADDR COVER_HOST_B ANYTLS_PASS_B RESTLS_PASS_B RESTLS_ALT_PORT SHADOW_PORT SHADOW_COVER SHADOW_ANYTLS SHADOW_LAYER
 export REALITY_PORT REALITY_COVER REALITY_UUID REALITY_PUBLIC REALITY_SHORT_ID
 python3 - "$CLIENT" <<'PYCLIENT'
 import json,os,sys
@@ -162,6 +174,11 @@ obj={
       "carriers":{
         "restls":{
           "kind":"anytls-restls","addr":e["ADDR"],"port":443,
+          "cover":e["COVER_HOST_B"],"password":e["ANYTLS_PASS_B"],"layer":e["RESTLS_PASS_B"],
+          "tls_version":"tls13"
+        },
+        "restls_alt":{
+          "kind":"anytls-restls","addr":e["ADDR"],"port":int(e["RESTLS_ALT_PORT"]),
           "cover":e["COVER_HOST_B"],"password":e["ANYTLS_PASS_B"],"layer":e["RESTLS_PASS_B"],
           "tls_version":"tls13"
         },
@@ -200,7 +217,7 @@ chmod 0700 "$ROLLBACK"
 
 trap - EXIT
 cleanup
-log "SUCCESS: retired F4 canary now exposes ResTLS:443, ShadowTLS:${SHADOW_PORT}, Reality:${REALITY_PORT}"
+log "SUCCESS: retired F4 canary exposes ResTLS:443 + control:${RESTLS_ALT_PORT}, ShadowTLS:${SHADOW_PORT}, Reality:${REALITY_PORT}"
 log "Client credential bundle created at $CLIENT (mode 0600; do not paste its contents into chat/repo)"
 log "SHA256 bundle: $(sha256sum "$CLIENT" | awk '{print $1}')"
 log "Rollback command: sudo $ROLLBACK"
