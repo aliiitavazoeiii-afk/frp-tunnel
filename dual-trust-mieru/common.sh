@@ -74,7 +74,7 @@ install_xray(){
     rm -rf "$tmp"
   fi
   ln -sfn "$bin" "$BIN_DIR/xray"
-  "$BIN_DIR/xray" version | head -n1
+  "$BIN_DIR/xray" version | sed -n '1p'
 }
 
 install_mihomo(){
@@ -103,7 +103,7 @@ install_mihomo(){
     rm -rf "$tmp"
   fi
   ln -sfn "$bin" "$BIN_DIR/mihomo"
-  "$BIN_DIR/mihomo" -v | head -n1
+  "$BIN_DIR/mihomo" -v | sed -n '1p'
 }
 
 install_trust_endpoint(){
