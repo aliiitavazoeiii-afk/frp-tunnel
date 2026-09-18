@@ -4,56 +4,82 @@ set -Eeuo pipefail
 P=anytls-tunnel
 C=/etc/$P
 M=/usr/local/bin/mihomo-$P
-CFG=$C/config.yaml
-ENV_PRIMARY=/root/anytls-foreign-b.env
-ENV_FALLBACK=$C/deploy.env
-ADDR=${1:-}
-ACK=${2:-}
-RESTLS_ALT_PORT=${RESTLS_ALT_PORT:-8442}
-SHADOW_PORT=${SHADOW_PORT:-8443}
+NODE=${1:-}
+ADDR=${2:-}
+ACK=${3:-}
+CONTROL_PORT=${CONTROL_PORT:-8442}
+ALT_PORT=${ALT_PORT:-8443}
 REALITY_PORT=${REALITY_PORT:-8444}
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
-[[ "$ACK" == "--retired-canary" ]] || die "usage: sudo bash $0 OLD_F4_PUBLIC_IP --retired-canary"
+[[ "$NODE" =~ ^F[1-5]$ ]] || die "usage: sudo bash $0 F1..F5 PUBLIC_IP --quarantined-canary"
 [[ "$ADDR" =~ ^[A-Za-z0-9._:-]+$ ]] || die "invalid public address"
+[[ "$ACK" == "--quarantined-canary" ]] || die "refusing: node must already be quarantined by Bucket5"
 [[ -x "$M" ]] || die "missing $M"
-[[ -f "$CFG" ]] || die "missing $CFG"
+[[ -f "$C/config.yaml" ]] || die "missing production config"
 systemctl is-active --quiet "$P" || die "$P is not active"
 systemctl is-active --quiet anytls-xudp-bridge || die "anytls-xudp-bridge is not active"
+ss -H -ltn 'sport = :2443' 2>/dev/null | grep -q '127.0.0.1:2443' || die "XUDP loopback :2443 missing"
 
-ROLE_ENV=""
-if [[ -f "$ENV_PRIMARY" ]]; then ROLE_ENV=$ENV_PRIMARY
-elif [[ -f "$ENV_FALLBACK" ]]; then ROLE_ENV=$ENV_FALLBACK
-else die "cannot find foreign-b env"
-fi
-# shellcheck disable=SC1090
-source "$ROLE_ENV"
-: "${COVER_HOST_B:?missing COVER_HOST_B}"
-: "${ANYTLS_PASS_B:?missing ANYTLS_PASS_B}"
-: "${RESTLS_PASS_B:?missing RESTLS_PASS_B}"
+case "$NODE" in
+  F1|F2|F3)
+    PRIMARY_KIND=shadow
+    ROLE_ENV=/root/anytls-foreign-a.env
+    [[ -f "$ROLE_ENV" ]] || ROLE_ENV=$C/deploy.env
+    [[ -f "$ROLE_ENV" ]] || die "cannot find foreign-a env"
+    # shellcheck disable=SC1090
+    source "$ROLE_ENV"
+    : "${COVER_HOST_A:?missing COVER_HOST_A}"
+    : "${ANYTLS_PASS_A:?missing ANYTLS_PASS_A}"
+    : "${SHADOWTLS_PASS_A:?missing SHADOWTLS_PASS_A}"
+    PRIMARY_COVER=$COVER_HOST_A
+    PRIMARY_ANYTLS=$ANYTLS_PASS_A
+    PRIMARY_LAYER=$SHADOWTLS_PASS_A
+    ;;
+  F4|F5)
+    PRIMARY_KIND=restls
+    ROLE_ENV=/root/anytls-foreign-b.env
+    [[ -f "$ROLE_ENV" ]] || ROLE_ENV=$C/deploy.env
+    [[ -f "$ROLE_ENV" ]] || die "cannot find foreign-b env"
+    # shellcheck disable=SC1090
+    source "$ROLE_ENV"
+    : "${COVER_HOST_B:?missing COVER_HOST_B}"
+    : "${ANYTLS_PASS_B:?missing ANYTLS_PASS_B}"
+    : "${RESTLS_PASS_B:?missing RESTLS_PASS_B}"
+    PRIMARY_COVER=$COVER_HOST_B
+    PRIMARY_ANYTLS=$ANYTLS_PASS_B
+    PRIMARY_LAYER=$RESTLS_PASS_B
+    ;;
+esac
 
-SHADOW_COVER=${SHADOW_COVER:-$COVER_HOST_B}
-REALITY_COVER=${REALITY_COVER:-$COVER_HOST_B}
-[[ "$SHADOW_COVER" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid SHADOW_COVER"
-[[ "$REALITY_COVER" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid REALITY_COVER"
-for p in "$RESTLS_ALT_PORT" "$SHADOW_PORT" "$REALITY_PORT"; do
-  [[ "$p" =~ ^[0-9]+$ ]] && ((p>=1 && p<=65535)) || die "invalid port $p"
+CANARY_COVER=${CANARY_COVER:-$PRIMARY_COVER}
+[[ "$CANARY_COVER" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid CANARY_COVER"
+for p in "$CONTROL_PORT" "$ALT_PORT" "$REALITY_PORT"; do
+  [[ "$p" =~ ^[0-9]+$ ]] && ((p>=1024 && p<=65535)) || die "invalid canary port $p"
   if ss -H -ltn "sport = :$p" 2>/dev/null | grep -q .; then
     ss -ltnp "sport = :$p" >&2 || true
     die "TCP/$p is already in use; production untouched"
   fi
 done
 
-TMP=$(mktemp -d /tmp/bucket5-transport-foreign.XXXXXX)
+LOWER=${NODE,,}
+DIR=/etc/anytls-transport-canary/$LOWER
+UNIT=anytls-transport-canary-$LOWER.service
+UNIT_PATH=/etc/systemd/system/$UNIT
+CLIENT=/root/bucket5-$LOWER-canary-client.json
+REMOVE=/usr/local/sbin/bucket5-transport-canary-$LOWER-remove
+[[ ! -e "$DIR" && ! -e "$UNIT_PATH" ]] || die "existing $NODE canary found; remove it first with $REMOVE if appropriate"
+
+TMP=$(mktemp -d /tmp/bucket5-transport-sidecar.XXXXXX)
 cleanup(){ rm -rf "$TMP"; }
 trap cleanup EXIT
 umask 077
 
-SHADOW_ANYTLS=$(openssl rand -hex 24)
-SHADOW_LAYER=$(openssl rand -hex 24)
+ALT_ANYTLS=$(openssl rand -hex 24)
+ALT_LAYER=$(openssl rand -hex 24)
 REALITY_UUID=$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
@@ -70,46 +96,70 @@ cat >"$CAND" <<YAML
 mode: rule
 log-level: info
 ipv6: false
-
 listeners:
-  - name: anytls-restls-primary
+YAML
+
+if [[ "$PRIMARY_KIND" == shadow ]]; then
+cat >>"$CAND" <<YAML
+  - name: primary-shadow-port-control
     type: anytls
     listen: 0.0.0.0
-    port: 443
+    port: ${CONTROL_PORT}
     users:
-      tunnel: "${ANYTLS_PASS_B}"
+      tunnel: "${PRIMARY_ANYTLS}"
+    shadow-tls:
+      enable: true
+      version: 3
+      users:
+        - name: tunnel
+          password: "${PRIMARY_LAYER}"
+      handshake:
+        dest: "${PRIMARY_COVER}:443"
+
+  - name: alternate-restls
+    type: anytls
+    listen: 0.0.0.0
+    port: ${ALT_PORT}
+    users:
+      canary: "${ALT_ANYTLS}"
     res-tls:
       enable: true
-      dest: "${COVER_HOST_B}:443"
-      password: "${RESTLS_PASS_B}"
-
-  - name: anytls-restls-port-control
+      dest: "${CANARY_COVER}:443"
+      password: "${ALT_LAYER}"
+YAML
+else
+cat >>"$CAND" <<YAML
+  - name: primary-restls-port-control
     type: anytls
     listen: 0.0.0.0
-    port: ${RESTLS_ALT_PORT}
+    port: ${CONTROL_PORT}
     users:
-      tunnel: "${ANYTLS_PASS_B}"
+      tunnel: "${PRIMARY_ANYTLS}"
     res-tls:
       enable: true
-      dest: "${COVER_HOST_B}:443"
-      password: "${RESTLS_PASS_B}"
+      dest: "${PRIMARY_COVER}:443"
+      password: "${PRIMARY_LAYER}"
 
-  - name: anytls-shadowtls-v3-canary
+  - name: alternate-shadow
     type: anytls
     listen: 0.0.0.0
-    port: ${SHADOW_PORT}
+    port: ${ALT_PORT}
     users:
-      canary: "${SHADOW_ANYTLS}"
+      canary: "${ALT_ANYTLS}"
     shadow-tls:
       enable: true
       version: 3
       users:
         - name: canary
-          password: "${SHADOW_LAYER}"
+          password: "${ALT_LAYER}"
       handshake:
-        dest: "${SHADOW_COVER}:443"
+        dest: "${CANARY_COVER}:443"
+YAML
+fi
 
-  - name: vless-reality-canary
+cat >>"$CAND" <<YAML
+
+  - name: alternate-vless-reality
     type: vless
     listen: 0.0.0.0
     port: ${REALITY_PORT}
@@ -118,106 +168,96 @@ listeners:
         uuid: "${REALITY_UUID}"
         flow: xtls-rprx-vision
     reality-config:
-      dest: "${REALITY_COVER}:443"
+      dest: "${CANARY_COVER}:443"
       private-key: "${REALITY_PRIVATE}"
       short-id:
         - "${REALITY_SHORT_ID}"
       server-names:
-        - "${REALITY_COVER}"
+        - "${CANARY_COVER}"
 
 rules:
   - MATCH,DIRECT
 YAML
 
+mkdir -p "$DIR"
+chown anytls-tunnel:anytls-tunnel "$DIR"
+chmod 0750 "$DIR"
 chown anytls-tunnel:anytls-tunnel "$CAND"
 chmod 0600 "$CAND"
-log "Validating three-listener Mihomo candidate"
-runuser -u anytls-tunnel -- "$M" -t -d "$C" -f "$CAND" >/dev/null || die "candidate config invalid; production untouched"
+log "Validating $NODE sidecar candidate; production :443 is untouched"
+runuser -u anytls-tunnel -- "$M" -t -d "$DIR" -f "$CAND" >/dev/null || die "sidecar candidate config invalid; production untouched"
+install -o anytls-tunnel -g anytls-tunnel -m 0600 "$CAND" "$DIR/config.yaml"
 
-BK=/var/lib/$P/backups/transport-canary-$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "$BK"
-chmod 0700 "$BK"
-cp -a "$CFG" "$BK/config.yaml"
-[[ -f "$ROLE_ENV" ]] && cp -a "$ROLE_ENV" "$BK/role.env"
-
-rollback(){
-  set +e
-  log "ROLLBACK: restoring previous foreign config"
-  cp -a "$BK/config.yaml" "$CFG"
-  chown anytls-tunnel:anytls-tunnel "$CFG"
-  chmod 0600 "$CFG"
-  systemctl restart "$P"
-}
-trap 'rc=$?; if ((rc!=0)); then rollback; fi; cleanup' EXIT
-
-install -o anytls-tunnel -g anytls-tunnel -m 0600 "$CAND" "$CFG"
-log "Activating canary listeners with one controlled Mihomo restart"
-systemctl restart "$P"
+cat >"$UNIT_PATH" <<UNIT
+[Unit]
+Description=Bucket5 transport canary sidecar for $NODE
+After=network-online.target anytls-tunnel.service anytls-xudp-bridge.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=anytls-tunnel
+Group=anytls-tunnel
+WorkingDirectory=$DIR
+ExecStart=$M -d $DIR -f $DIR/config.yaml
+Restart=always
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=$DIR
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemd-analyze verify "$UNIT_PATH" >/dev/null
+systemctl daemon-reload
+systemctl enable --now "$UNIT" >/dev/null
 sleep 2
-systemctl is-active --quiet "$P" || { journalctl -u "$P" -n 100 --no-pager >&2 || true; die "Mihomo failed after activation"; }
-for p in 443 "$RESTLS_ALT_PORT" "$SHADOW_PORT" "$REALITY_PORT"; do
-  ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || { journalctl -u "$P" -n 100 --no-pager >&2 || true; die "listener TCP/$p missing"; }
+systemctl is-active --quiet "$UNIT" || { journalctl -u "$UNIT" -n 100 --no-pager >&2 || true; die "canary sidecar failed"; }
+for p in "$CONTROL_PORT" "$ALT_PORT" "$REALITY_PORT"; do
+  ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || { journalctl -u "$UNIT" -n 100 --no-pager >&2 || true; die "canary listener TCP/$p missing"; }
 done
-ss -H -ltn "sport = :2443" 2>/dev/null | grep -q '127.0.0.1:2443' || die "XUDP loopback :2443 missing"
+# Explicitly prove production primary stayed up and was not restarted/reconfigured by this script.
+ss -H -ltn 'sport = :443' 2>/dev/null | grep -q . || die "production TCP/443 unexpectedly missing"
+systemctl is-active --quiet "$P" || die "production $P unexpectedly inactive"
 
-CLIENT=/root/bucket5-f4-canary-client.json
-export ADDR COVER_HOST_B ANYTLS_PASS_B RESTLS_PASS_B RESTLS_ALT_PORT SHADOW_PORT SHADOW_COVER SHADOW_ANYTLS SHADOW_LAYER
-export REALITY_PORT REALITY_COVER REALITY_UUID REALITY_PUBLIC REALITY_SHORT_ID
+export NODE ADDR PRIMARY_KIND PRIMARY_COVER PRIMARY_ANYTLS PRIMARY_LAYER CONTROL_PORT ALT_PORT CANARY_COVER ALT_ANYTLS ALT_LAYER REALITY_PORT REALITY_UUID REALITY_PUBLIC REALITY_SHORT_ID
 python3 - "$CLIENT" <<'PYCLIENT'
 import json,os,sys
-path=sys.argv[1]
-e=os.environ
-obj={
-  "version":1,
-  "nodes":{
-    "F4":{
-      "carriers":{
-        "restls":{
-          "kind":"anytls-restls","addr":e["ADDR"],"port":443,
-          "cover":e["COVER_HOST_B"],"password":e["ANYTLS_PASS_B"],"layer":e["RESTLS_PASS_B"],
-          "tls_version":"tls13"
-        },
-        "restls_alt":{
-          "kind":"anytls-restls","addr":e["ADDR"],"port":int(e["RESTLS_ALT_PORT"]),
-          "cover":e["COVER_HOST_B"],"password":e["ANYTLS_PASS_B"],"layer":e["RESTLS_PASS_B"],
-          "tls_version":"tls13"
-        },
-        "shadow":{
-          "kind":"anytls-shadow","addr":e["ADDR"],"port":int(e["SHADOW_PORT"]),
-          "cover":e["SHADOW_COVER"],"password":e["SHADOW_ANYTLS"],"layer":e["SHADOW_LAYER"],
-          "shadow_version":3
-        },
-        "reality":{
-          "kind":"vless-reality","addr":e["ADDR"],"port":int(e["REALITY_PORT"]),
-          "server_name":e["REALITY_COVER"],"uuid":e["REALITY_UUID"],
-          "public_key":e["REALITY_PUBLIC"],"short_id":e["REALITY_SHORT_ID"],
-          "flow":"xtls-rprx-vision"
-        }
-      }
-    }
-  }
+p=sys.argv[1]; e=os.environ
+node=e['NODE']; primary=e['PRIMARY_KIND']
+def anytls(kind,port,password,layer,cover):
+    return {"kind":"anytls-"+kind,"addr":e['ADDR'],"port":int(port),"cover":cover,
+            "password":password,"layer":layer, **({"shadow_version":3} if kind=='shadow' else {"tls_version":"tls13"})}
+carriers={
+  "primary": anytls(primary,443,e['PRIMARY_ANYTLS'],e['PRIMARY_LAYER'],e['PRIMARY_COVER']),
+  "control": anytls(primary,e['CONTROL_PORT'],e['PRIMARY_ANYTLS'],e['PRIMARY_LAYER'],e['PRIMARY_COVER']),
 }
-with open(path,"w") as f: json.dump(obj,f,indent=2,sort_keys=True)
-os.chmod(path,0o600)
+alt='restls' if primary=='shadow' else 'shadow'
+carriers["alternate"]=anytls(alt,e['ALT_PORT'],e['ALT_ANYTLS'],e['ALT_LAYER'],e['CANARY_COVER'])
+carriers["reality"]={"kind":"vless-reality","addr":e['ADDR'],"port":int(e['REALITY_PORT']),
+  "server_name":e['CANARY_COVER'],"uuid":e['REALITY_UUID'],"public_key":e['REALITY_PUBLIC'],
+  "short_id":e['REALITY_SHORT_ID'],"flow":"xtls-rprx-vision"}
+obj={"version":2,"nodes":{node:{"primary_kind":primary,"carriers":carriers}}}
+with open(p,'w') as f: json.dump(obj,f,indent=2,sort_keys=True)
+os.chmod(p,0o600)
 PYCLIENT
-unset ANYTLS_PASS_B RESTLS_PASS_B SHADOW_ANYTLS SHADOW_LAYER REALITY_UUID REALITY_PUBLIC REALITY_SHORT_ID
 
-ROLLBACK=/root/rollback-bucket5-transport-canary.sh
-cat >"$ROLLBACK" <<ROLL
+cat >"$REMOVE" <<ROLL
 #!/usr/bin/env bash
 set -Eeuo pipefail
-cp -a '$BK/config.yaml' '$CFG'
-chown anytls-tunnel:anytls-tunnel '$CFG'
-chmod 0600 '$CFG'
-systemctl restart '$P'
-systemctl is-active --quiet '$P'
-echo 'Rollback complete.'
+systemctl disable --now '$UNIT' >/dev/null 2>&1 || true
+rm -f '$UNIT_PATH'
+systemctl daemon-reload
+rm -rf '$DIR'
+echo 'Removed $NODE transport canary sidecar. Production anytls-tunnel was not modified.'
 ROLL
-chmod 0700 "$ROLLBACK"
+chmod 0700 "$REMOVE"
 
 trap - EXIT
 cleanup
-log "SUCCESS: retired F4 canary exposes ResTLS:443 + control:${RESTLS_ALT_PORT}, ShadowTLS:${SHADOW_PORT}, Reality:${REALITY_PORT}"
-log "Client credential bundle created at $CLIENT (mode 0600; do not paste its contents into chat/repo)"
+log "SUCCESS: $NODE canary sidecar is active; production TCP/443 was not modified"
+log "primary=${PRIMARY_KIND}:443, same-transport-control=${CONTROL_PORT}, alternate=${ALT_PORT}, reality=${REALITY_PORT}"
+log "Client bundle: $CLIENT (0600; never paste contents into chat/repo)"
 log "SHA256 bundle: $(sha256sum "$CLIENT" | awk '{print $1}')"
-log "Rollback command: sudo $ROLLBACK"
+log "Remove canary: sudo $REMOVE"
