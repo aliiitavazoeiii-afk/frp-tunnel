@@ -98,7 +98,7 @@ cat > "$D/xray.json" <<EOF2
   "log":{"loglevel":"warning"},
   "inbounds":[{
     "tag":"xudp-in","listen":"127.0.0.1","port":2443,"protocol":"vless",
-    "settings":{"clients":[{"id":"$XUDP_UUID","email":"dual-mieru-xudp"}],"decryption":"none"},
+    "settings":{"users":[{"id":"$XUDP_UUID","email":"dual-mieru-xudp"}],"decryption":"none"},
     "streamSettings":{"network":"raw"}
   }],
   "outbounds":[{"tag":"direct","protocol":"freedom","settings":{"domainStrategy":"UseIP"}}],
