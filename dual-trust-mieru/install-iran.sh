@@ -17,9 +17,11 @@ for x in /etc/systemd/system/mieru.service /lib/systemd/system/mieru.service /us
 done
 
 MIERU_INSTALLED=0
+TPID=""
 cleanup_install(){
   rc=$?
   trap - EXIT
+  if [[ -n "$TPID" ]]; then kill "$TPID" 2>/dev/null || true; wait "$TPID" 2>/dev/null || true; fi
   if (( rc != 0 )); then
     log "Install failed; removing partial dual Iran services/config. x-ui was never touched."
     for svc in dual-dispatcher dual-xudp-bridge dual-mieru-client dual-trust-client; do
@@ -190,8 +192,6 @@ MIERU_CONFIG_JSON_FILE="$D/mieru-client.json" mieru test https://www.gstatic.com
 
 log "Preflight TrustTunnel client on local SOCKS/7993"
 "$BIN_DIR/trusttunnel_client" --config "$D/trust-client.toml" >"$D/trust-candidate.log" 2>&1 & TPID=$!
-cleanup_trust(){ kill "$TPID" 2>/dev/null || true; wait "$TPID" 2>/dev/null || true; }
-trap cleanup_trust EXIT
 for _ in $(seq 1 60); do
   ss -H -ltn 'sport = :7993' 2>/dev/null | grep -q . && break
   kill -0 "$TPID" 2>/dev/null || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel client candidate exited"; }
@@ -200,7 +200,9 @@ done
 ss -H -ltn 'sport = :7993' | grep -q . || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel SOCKS/7993 did not start"; }
 code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7993 --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
 [[ "$code" == 204 ]] || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel direct carrier preflight failed HTTP=$code"; }
-cleanup_trust; trap - EXIT
+kill "$TPID" 2>/dev/null || true
+wait "$TPID" 2>/dev/null || true
+TPID=""
 rm -f "$D/trust-candidate.log"
 
 mkdir -p /var/cache/dual-trust-mieru
