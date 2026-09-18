@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT=dual-trust-mieru
 XUI_DB=/etc/x-ui/x-ui.db
 XUI_RUNTIME=/usr/local/x-ui/bin/config.json
 XUI_BIN=/usr/local/x-ui/x-ui
+PROBE="$B/dual-probe.sh"
 STATE=/var/lib/$PROJECT
 ENTRY=7990
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
 [[ -f "$XUI_DB" && -f "$XUI_RUNTIME" && -x "$XUI_BIN" ]] || die "x-ui DB/runtime/binary missing"
+[[ -x "$PROBE" ]] || die "repo dual-probe.sh missing or not executable"
 systemctl is-active --quiet x-ui || die "x-ui inactive"
 for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher; do
   systemctl is-active --quiet "$s" || die "$s inactive"
 done
 ss -H -ltn 'sport = :7990' 2>/dev/null | grep -q . || die "dual entry SOCKS/7990 missing"
-[[ -x /usr/local/sbin/dual-tunnel-probe ]] || die "dual-tunnel-probe missing"
 
 XUI_VERSION=$($XUI_BIN -v 2>&1 || true)
 XUI_VERSION=${XUI_VERSION%%$'\n'*}
@@ -24,7 +26,7 @@ XUI_VERSION=${XUI_VERSION//$'\r'/}
 log "Detected x-ui version: $XUI_VERSION"
 
 log "Full dual-path precheck before touching x-ui"
-/usr/local/sbin/dual-tunnel-probe --full
+"$PROBE" --full
 
 INBOUND_TAG=$(python3 <<'PY'
 import json
