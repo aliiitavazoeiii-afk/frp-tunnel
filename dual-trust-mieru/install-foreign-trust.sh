@@ -66,6 +66,16 @@ KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
 install_trust_endpoint
 install_xray
 
+# TrustTunnel resolves tunneled hostname destinations on the foreign endpoint.
+# Keep the XUDP backend loopback-only while giving it a stable hostname that
+# resolves locally on the Trust foreign.
+TRUST_XUDP_HOST=xudp-trust.internal
+TRUST_XUDP_MARKER='# dual-trust-mieru trust-xudp-backend'
+if ! getent ahostsv4 "$TRUST_XUDP_HOST" 2>/dev/null | awk '{print $1}' | grep -Fxq '127.0.0.1'; then
+  printf '127.0.0.1 %s %s\n' "$TRUST_XUDP_HOST" "$TRUST_XUDP_MARKER" >> /etc/hosts
+fi
+getent ahostsv4 "$TRUST_XUDP_HOST" | awk '{print $1}' | grep -Fxq '127.0.0.1' || die "$TRUST_XUDP_HOST does not resolve to 127.0.0.1 on Trust foreign"
+
 mkdir -p "$D"; chmod 0700 "$D"
 USER_NAME="dtm-$(openssl rand -hex 4)"
 USER_PASS=$(openssl rand -hex 32)
