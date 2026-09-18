@@ -8,7 +8,7 @@ MIERU_BUNDLE=${2:-}
 HOSTNAME=xudp-trust.internal
 HOST_MARKER='# dual-trust-mieru trust-xudp-hostname'
 HOST_LINE="127.0.0.1 $HOSTNAME $HOST_MARKER"
-TMP=$(mktemp /tmp/dual-install-iran-rc8.XXXXXX.sh)
+TMP=$(mktemp "$B/.dual-install-iran-rc8.XXXXXX.sh")
 HOST_ADDED=0
 SUCCESS=0
 
