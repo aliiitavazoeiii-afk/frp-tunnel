@@ -31,7 +31,7 @@ systemctl daemon-reload
 systemctl reset-failed >/dev/null 2>&1 || true
 
 rm -rf "$D"
-rm -f /usr/local/sbin/dual-tunnel-probe /usr/local/sbin/dual-tunnel-status /usr/local/sbin/dual-tunnel-failover-test
+rm -f /usr/local/sbin/dual-tunnel-probe /usr/local/sbin/dual-tunnel-status /usr/local/sbin/dual-tunnel-failover-test /usr/local/sbin/dual-tunnel-replace-foreign
 
 echo "SUCCESS: Iran dual Trust/Mieru services/config removed."
 echo "Pinned shared binaries and x-ui backups were intentionally retained."
