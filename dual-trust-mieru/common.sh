@@ -7,6 +7,8 @@ STATE_DIR=/var/lib/$PROJECT
 BIN_DIR=/usr/local/lib/$PROJECT
 BACKUP_DIR=$STATE_DIR/backups
 
+# v26.9.9 is currently marked pre-release upstream. Keep the latest non-pre-release
+# 26.9.x build for this production candidate until a newer stable Xray is published.
 XRAY_VERSION=v26.9.8
 MIHOMO_VERSION=v1.19.31
 TRUST_ENDPOINT_VERSION=v1.0.33
@@ -55,11 +57,11 @@ install_xray(){
   case "$arch" in
     amd64)
       url="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip"
-      sha="f26f248f522ecba81fd85ee6eb501f1327b073866227c295c4d85cfd0c6ed985"
+      sha="a8c6d5b53957600d7e18d16e697201a4c942fe823307deb039bf8f40587aa556"
       ;;
     arm64)
       url="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-arm64-v8a.zip"
-      sha="d30c0c055bfb727976bedb55d1d55c9825a8a75006f71b9b5c7fb1182293284c"
+      sha="6721edb5b80e046536abc8235bd0977a2c69ade88ad42c01c0df368beba070dc"
       ;;
   esac
   bin="$BIN_DIR/xray-${XRAY_VERSION}"
@@ -110,12 +112,12 @@ install_trust_endpoint(){
   arch=$(arch_name)
   case "$arch" in
     amd64)
-      asset="trusttunnel_endpoint-x86_64-unknown-linux-gnu-${TRUST_ENDPOINT_VERSION}.tar.gz"
-      sha="c6bc3c15db700278497e31e7a70c5c14c6866f10a5193a7c2dce353d7c578114"
+      asset="trusttunnel-v1.0.33-linux-x86_64.tar.gz"
+      sha="48802662bc745aed60207c6ed6465d9fed428b1e53532045689d89bcad19bdd9"
       ;;
     arm64)
-      asset="trusttunnel_endpoint-aarch64-unknown-linux-gnu-${TRUST_ENDPOINT_VERSION}.tar.gz"
-      sha="a7deedf5e81d63ba744242e94aa6350b02d3e54993910d133793f92d6a2f9517"
+      asset="trusttunnel-v1.0.33-linux-aarch64.tar.gz"
+      sha="8b0d13d11f607c1da18be921096de3f85af67520b305aad425c74dd4f6775697"
       ;;
   esac
   url="https://github.com/TrustTunnel/TrustTunnel/releases/download/${TRUST_ENDPOINT_VERSION}/${asset}"
@@ -139,12 +141,12 @@ install_trust_client(){
   arch=$(arch_name)
   case "$arch" in
     amd64)
-      asset="trusttunnel_client-x86_64-unknown-linux-gnu-${TRUST_CLIENT_VERSION}.tar.gz"
-      sha="2c0721371de6087a7fbe6052549255914370485147971e465947d455284bc8b4"
+      asset="trusttunnel_client-v1.0.49-linux-x86_64.tar.gz"
+      sha="01f9f8c46cd673215c3a4052ef790166e874c59295e35daf6b13103e6366f4e5"
       ;;
     arm64)
-      asset="trusttunnel_client-aarch64-unknown-linux-gnu-${TRUST_CLIENT_VERSION}.tar.gz"
-      sha="9d4bed106b7065d23aca61c05016f9bfb715643d2bda2d5da16356c3007a88bc"
+      asset="trusttunnel_client-v1.0.49-linux-aarch64.tar.gz"
+      sha="a0189fd182c478679fae89e3747e79c5edab56c8fcc34e1f80783a96f56b95d6"
       ;;
   esac
   url="https://github.com/TrustTunnel/TrustTunnelClient/releases/download/${TRUST_CLIENT_VERSION}/${asset}"
