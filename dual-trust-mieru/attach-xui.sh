@@ -28,20 +28,28 @@ log "Detected x-ui version: $XUI_VERSION"
 log "Full dual-path precheck before touching x-ui"
 "$PROBE" --full
 
-INBOUND_TAG=$(python3 <<'PY'
+read -r INBOUND_TAG INBOUND_LISTEN < <(python3 <<'PY'
 import json
 cfg=json.load(open('/usr/local/x-ui/bin/config.json'))
 xs=[]
 for i in cfg.get('inbounds',[]):
     try: p=int(i.get('port',0))
     except Exception: continue
-    if p==443 and str(i.get('listen','')) not in ('127.0.0.1','::1','localhost') and i.get('tag'):
+    if p==443 and i.get('tag'):
         xs.append(i)
-if len(xs)!=1: raise SystemExit(f'expected exactly one public :443 inbound, found {len(xs)}')
-print(xs[0]['tag'])
+if len(xs)!=1:
+    raise SystemExit(f'expected exactly one :443 inbound, found {len(xs)}')
+i=xs[0]
+print(i['tag'], str(i.get('listen','') or ''))
 PY
-) || die "could not uniquely discover public :443 inbound"
-log "Public x-ui inbound: $INBOUND_TAG"
+) || die "could not uniquely discover :443 inbound"
+[[ -n "$INBOUND_TAG" ]] || die "empty :443 inbound tag"
+log "x-ui :443 inbound: tag=$INBOUND_TAG listen=${INBOUND_LISTEN:-<empty>}"
+
+if [[ "$INBOUND_LISTEN" == "127.0.0.1" || "$INBOUND_LISTEN" == "::1" || "$INBOUND_LISTEN" == "localhost" ]]; then
+  [[ "$XUI_VERSION" == "2.9.4" ]] || die "x-ui :443 is loopback-only on unsupported version $XUI_VERSION"
+  log "x-ui 2.9.4 loopback-only :443 detected; attach will change DB listen to 0.0.0.0 with rollback backup"
+fi
 
 mkdir -p "$STATE/backups"
 BK="$STATE/backups/xui-attach-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -152,13 +160,21 @@ try:
     else: raise RuntimeError(f'could not uniquely locate inbound table: {[x[0] for x in candidates]}')
     cols_to=['rowid','port','listen','sniffing']+[x for x in ('enable','tag','protocol') if x in cols]
     rows=[dict(zip(cols_to,r)) for r in con.execute(f'SELECT {",".join(cols_to)} FROM "{table}" WHERE port=443')]
-    def public(x):
-        if str(x.get('listen') or '') in ('127.0.0.1','::1','localhost'): return False
-        if 'enable' in x and int(x.get('enable') or 0)!=1: return False
-        return True
-    rows=[x for x in rows if public(x)]
-    if len(rows)!=1: raise RuntimeError(f'expected one DB public :443 inbound, got {len(rows)}')
+    if 'enable' in cols:
+        rows=[x for x in rows if int(x.get('enable') or 0)==1]
+    if len(rows)!=1:
+        raise RuntimeError(f'expected one enabled DB :443 inbound, got {len(rows)}')
     item=rows[0]
+
+    listen=str(item.get('listen') or '')
+    if listen in ('127.0.0.1','::1','localhost'):
+        if version != '2.9.4':
+            raise RuntimeError(f'loopback-only :443 listen on unsupported x-ui version {version!r}')
+        con.execute(f'UPDATE "{table}" SET listen=? WHERE rowid=?',('0.0.0.0',item['rowid']))
+        print('PATCHED: x-ui 2.9.4 :443 listen loopback -> 0.0.0.0')
+    elif listen not in ('','0.0.0.0','::','[::]'):
+        print(f'NOTICE: preserving existing non-loopback :443 listen={listen!r}')
+
     try: sniff=json.loads(item.get('sniffing') or '{}')
     except Exception: sniff={}
     sniff.update({'enabled':True,'destOverride':['http','tls','quic','fakedns'],'metadataOnly':False,'routeOnly':False})
