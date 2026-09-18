@@ -4,33 +4,33 @@ B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
 source "$B/common.sh"
 require_root
+
 TRUST_BUNDLE=${1:-}
 MIERU_BUNDLE=${2:-}
 [[ -f "$TRUST_BUNDLE" && -f "$MIERU_BUNDLE" ]] || die "usage: $0 /root/dual-trust-client.json /root/dual-mieru-client.json"
 
 D="$CONFIG_DIR/iran"
-for x in "$D" /etc/systemd/system/dual-trust-client.service /etc/systemd/system/dual-mieru-client.service /etc/systemd/system/dual-xudp-bridge.service /etc/systemd/system/dual-dispatcher.service; do
+SERVICES=(dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher)
+for x in "$D" /etc/systemd/system/dual-trust-client.service /etc/systemd/system/dual-mieru-carrier.service /etc/systemd/system/dual-xudp-bridge.service /etc/systemd/system/dual-dispatcher.service; do
   [[ ! -e "$x" ]] || die "existing Iran dual-tunnel state found at $x; run uninstall-iran.sh first if this is a previous test install"
 done
-for x in /etc/systemd/system/mieru.service /lib/systemd/system/mieru.service /usr/lib/systemd/system/mieru.service; do
-  [[ ! -e "$x" ]] || die "existing standalone Mieru client installation detected; v1 Iran installer refuses to disable/replace it"
-done
 
-MIERU_INSTALLED=0
-TPID=""
+TPID=""; MPID=""
 cleanup_install(){
   rc=$?
   trap - EXIT
-  if [[ -n "$TPID" ]]; then kill "$TPID" 2>/dev/null || true; wait "$TPID" 2>/dev/null || true; fi
+  [[ -n "$TPID" ]] && kill "$TPID" 2>/dev/null || true
+  [[ -n "$MPID" ]] && kill "$MPID" 2>/dev/null || true
+  [[ -n "$TPID" ]] && wait "$TPID" 2>/dev/null || true
+  [[ -n "$MPID" ]] && wait "$MPID" 2>/dev/null || true
   if (( rc != 0 )); then
-    log "Install failed; removing partial dual Iran services/config. x-ui was never touched."
-    for svc in dual-dispatcher dual-xudp-bridge dual-mieru-client dual-trust-client; do
+    log "Install failed; removing only partial dual Iran services/config. x-ui was never touched."
+    for svc in "${SERVICES[@]}"; do
       systemctl disable --now "$svc.service" >/dev/null 2>&1 || true
       rm -f "/etc/systemd/system/$svc.service"
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
     rm -rf "$D"
-    if (( MIERU_INSTALLED )); then dpkg -r mieru >/dev/null 2>&1 || true; fi
     rm -f /usr/local/sbin/dual-tunnel-probe /usr/local/sbin/dual-tunnel-status /usr/local/sbin/dual-tunnel-failover-test
   fi
   exit "$rc"
@@ -39,23 +39,23 @@ trap cleanup_install EXIT
 
 install_base_packages
 mkdirs
-for p in 7990 7991 7992 7993 7994 17994 19090; do free_port "$p"; done
+for p in 7990 7991 7992 7993 7994 19090; do free_port "$p"; done
 
-jq -e '.version==1 and .kind=="trust" and .public_ip and .domain and .username and .password and .xudp_uuid' "$TRUST_BUNDLE" >/dev/null || die "invalid Trust bundle"
+jq -e '.version==1 and .kind=="trust" and .public_ip and .domain and .port and .username and .password and .xudp_uuid' "$TRUST_BUNDLE" >/dev/null || die "invalid Trust bundle"
 jq -e '.version==1 and .kind=="mieru" and .public_ip and .port_range and .username and .password and .xudp_uuid' "$MIERU_BUNDLE" >/dev/null || die "invalid Mieru bundle"
 
 install_trust_client
-install_mieru_deb client
-MIERU_INSTALLED=1
 install_xray
 install_mihomo
-systemctl disable --now mieru.service >/dev/null 2>&1 || true
 
-mkdir -p "$D"; chmod 0700 "$D"
+mkdir -p "$D" "$D/mieru-data" "$D/dispatcher-data"
+chmod 0700 "$D" "$D/mieru-data" "$D/dispatcher-data"
+
 if command -v timedatectl >/dev/null 2>&1; then
   sync=$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)
   [[ "$sync" == true ]] || log "WARNING: NTP synchronization is not reported active; verify the Iran and Mieru-foreign clocks are close"
 fi
+
 cp -a "$TRUST_BUNDLE" "$D/trust-bundle.json"
 cp -a "$MIERU_BUNDLE" "$D/mieru-bundle.json"
 chmod 0600 "$D"/*-bundle.json
@@ -72,7 +72,8 @@ MIERU_USER=$(jq -r '.username' "$MIERU_BUNDLE")
 MIERU_PASS=$(jq -r '.password' "$MIERU_BUNDLE")
 MIERU_UUID=$(jq -r '.xudp_uuid' "$MIERU_BUNDLE")
 CONTROLLER_SECRET=$(openssl rand -hex 24)
-printf '%s\n' "$CONTROLLER_SECRET" > "$D/controller.secret"; chmod 0600 "$D/controller.secret"
+printf '%s\n' "$CONTROLLER_SECRET" > "$D/controller.secret"
+chmod 0600 "$D/controller.secret"
 
 cat > "$D/trust-client.toml" <<EOF2
 loglevel = "info"
@@ -94,6 +95,7 @@ skip_verification = false
 certificate = ""
 dns_upstreams = []
 upstream_protocol = "http2"
+tls_profile = "chrome"
 anti_dpi = true
 
 [listener.socks]
@@ -101,24 +103,32 @@ address = "127.0.0.1:7993"
 EOF2
 chmod 0600 "$D/trust-client.toml"
 
-cat > "$D/mieru-client.json" <<EOF2
-{
-  "profiles":[{
-    "profileName":"dual",
-    "user":{"name":"$MIERU_USER","password":"$MIERU_PASS"},
-    "servers":[{"ipAddress":"$MIERU_IP","domainName":"","portBindings":[{"portRange":"$MIERU_RANGE","protocol":"TCP"}]}],
-    "mtu":1400,
-    "multiplexing":{"level":"MULTIPLEXING_OFF"},
-    "handshakeMode":"HANDSHAKE_STANDARD"
-  }],
-  "activeProfile":"dual",
-  "rpcPort":17994,
-  "socks5Port":7994,
-  "loggingLevel":"INFO",
-  "socks5ListenLAN":false
-}
+cat > "$D/mieru-carrier.yaml" <<EOF2
+mode: rule
+log-level: info
+ipv6: false
+listeners:
+  - name: mieru-carrier-socks
+    type: socks
+    listen: 127.0.0.1
+    port: 7994
+    udp: true
+    proxy: MIERU
+proxies:
+  - name: MIERU
+    type: mieru
+    server: "$MIERU_IP"
+    port-range: "$MIERU_RANGE"
+    transport: TCP
+    username: "$MIERU_USER"
+    password: "$MIERU_PASS"
+    multiplexing: MULTIPLEXING_LOW
+    handshake-mode: HANDSHAKE_STANDARD
+    traffic-pattern: ""
+rules:
+  - MATCH,MIERU
 EOF2
-chmod 0600 "$D/mieru-client.json"
+chmod 0600 "$D/mieru-carrier.yaml"
 
 cat > "$D/xudp.json" <<EOF2
 {
@@ -141,7 +151,7 @@ cat > "$D/xudp.json" <<EOF2
 EOF2
 chmod 0600 "$D/xudp.json"
 
-cat > "$D/mihomo.yaml" <<EOF2
+cat > "$D/dispatcher.yaml" <<EOF2
 mode: rule
 log-level: info
 ipv6: false
@@ -175,38 +185,44 @@ proxy-groups:
     expected-status: 204
     interval: 10
     lazy: false
-    timeout: 4000
+    timeout: 5000
     max-failed-times: 2
     strategy: round-robin
 rules:
   - MATCH,DUAL
 EOF2
-chmod 0600 "$D/mihomo.yaml"
+chmod 0600 "$D/dispatcher.yaml"
 
-log "Validating Xray and Mihomo candidates"
+log "Validating Xray and both Mihomo candidates"
 "$BIN_DIR/xray" run -test -c "$D/xudp.json" >/dev/null
-"$BIN_DIR/mihomo" -t -d "$D" -f "$D/mihomo.yaml" >/dev/null
+"$BIN_DIR/mihomo" -t -d "$D/mieru-data" -f "$D/mieru-carrier.yaml" >/dev/null
+"$BIN_DIR/mihomo" -t -d "$D/dispatcher-data" -f "$D/dispatcher.yaml" >/dev/null
 
-log "Preflight Mieru carrier against foreign server"
-MIERU_CONFIG_JSON_FILE="$D/mieru-client.json" mieru test https://www.gstatic.com/generate_204 >/dev/null || die "Mieru carrier preflight failed"
-
-log "Preflight TrustTunnel client on local SOCKS/7993"
+log "Preflight TrustTunnel direct carrier on local SOCKS/7993"
 "$BIN_DIR/trusttunnel_client" --config "$D/trust-client.toml" >"$D/trust-candidate.log" 2>&1 & TPID=$!
 for _ in $(seq 1 60); do
   ss -H -ltn 'sport = :7993' 2>/dev/null | grep -q . && break
   kill -0 "$TPID" 2>/dev/null || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel client candidate exited"; }
   sleep 0.25
 done
-ss -H -ltn 'sport = :7993' | grep -q . || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel SOCKS/7993 did not start"; }
+ss -H -ltn 'sport = :7993' 2>/dev/null | grep -q . || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel SOCKS/7993 did not start"; }
 code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7993 --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
 [[ "$code" == 204 ]] || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel direct carrier preflight failed HTTP=$code"; }
-kill "$TPID" 2>/dev/null || true
-wait "$TPID" 2>/dev/null || true
-TPID=""
+kill "$TPID" 2>/dev/null || true; wait "$TPID" 2>/dev/null || true; TPID=""
 rm -f "$D/trust-candidate.log"
 
-mkdir -p /var/cache/dual-trust-mieru
-chmod 0700 /var/cache/dual-trust-mieru
+log "Preflight Mieru native carrier on local SOCKS/7994"
+"$BIN_DIR/mihomo" -d "$D/mieru-data" -f "$D/mieru-carrier.yaml" >"$D/mieru-candidate.log" 2>&1 & MPID=$!
+for _ in $(seq 1 60); do
+  ss -H -ltn 'sport = :7994' 2>/dev/null | grep -q . && break
+  kill -0 "$MPID" 2>/dev/null || { tail -n 100 "$D/mieru-candidate.log" >&2 || true; die "Mieru carrier candidate exited"; }
+  sleep 0.25
+done
+ss -H -ltn 'sport = :7994' 2>/dev/null | grep -q . || { tail -n 100 "$D/mieru-candidate.log" >&2 || true; die "Mieru SOCKS/7994 did not start"; }
+code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7994 --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
+[[ "$code" == 204 ]] || { tail -n 100 "$D/mieru-candidate.log" >&2 || true; die "Mieru direct carrier preflight failed HTTP=$code"; }
+kill "$MPID" 2>/dev/null || true; wait "$MPID" 2>/dev/null || true; MPID=""
+rm -f "$D/mieru-candidate.log"
 
 cat > /etc/systemd/system/dual-trust-client.service <<EOF2
 [Unit]
@@ -227,23 +243,22 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF2
 
-cat > /etc/systemd/system/dual-mieru-client.service <<EOF2
+cat > /etc/systemd/system/dual-mieru-carrier.service <<EOF2
 [Unit]
-Description=Dual tunnel Mieru TCP client
+Description=Dual tunnel native Mihomo Mieru TCP carrier
 After=network-online.target
 Wants=network-online.target
 [Service]
-Type=exec
-Environment=MIERU_CONFIG_JSON_FILE=$D/mieru-client.json
-Environment=XDG_CACHE_HOME=/var/cache/dual-trust-mieru
-ExecStart=/usr/bin/mieru run
+Type=simple
+WorkingDirectory=$D/mieru-data
+ExecStart=$BIN_DIR/mihomo -d $D/mieru-data -f $D/mieru-carrier.yaml
 Restart=always
 RestartSec=2s
 LimitNOFILE=1048576
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/var/cache/dual-trust-mieru
+ReadWritePaths=$D/mieru-data
 PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
@@ -252,8 +267,8 @@ EOF2
 cat > /etc/systemd/system/dual-xudp-bridge.service <<EOF2
 [Unit]
 Description=Dual Trust/Mieru XUDP bridge
-After=dual-trust-client.service dual-mieru-client.service
-Wants=dual-trust-client.service dual-mieru-client.service
+After=dual-trust-client.service dual-mieru-carrier.service
+Wants=dual-trust-client.service dual-mieru-carrier.service
 [Service]
 Type=simple
 ExecStart=$BIN_DIR/xray run -c $D/xudp.json
@@ -269,41 +284,42 @@ EOF2
 
 cat > /etc/systemd/system/dual-dispatcher.service <<EOF2
 [Unit]
-Description=Dual Trust/Mieru health-aware load balancer
+Description=Dual Trust/Mieru health-aware full-path load balancer
 After=dual-xudp-bridge.service
-Requires=dual-xudp-bridge.service
+Wants=dual-xudp-bridge.service
 [Service]
 Type=simple
-WorkingDirectory=$D
-ExecStart=$BIN_DIR/mihomo -d $D -f $D/mihomo.yaml
+WorkingDirectory=$D/dispatcher-data
+ExecStart=$BIN_DIR/mihomo -d $D/dispatcher-data -f $D/dispatcher.yaml
 Restart=always
 RestartSec=2s
 LimitNOFILE=1048576
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=$D
+ReadWritePaths=$D/dispatcher-data
 PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF2
 
-systemd-analyze verify /etc/systemd/system/dual-{trust-client,mieru-client,xudp-bridge,dispatcher}.service >/dev/null
+systemd-analyze verify /etc/systemd/system/dual-trust-client.service /etc/systemd/system/dual-mieru-carrier.service /etc/systemd/system/dual-xudp-bridge.service /etc/systemd/system/dual-dispatcher.service >/dev/null
 systemctl daemon-reload
-systemctl enable --now dual-trust-client.service dual-mieru-client.service >/dev/null
+systemctl enable --now dual-trust-client.service dual-mieru-carrier.service >/dev/null
 sleep 2
-for p in 7993 7994; do ss -H -ltn "sport = :$p" | grep -q . || die "carrier SOCKS/$p missing"; done
+for p in 7993 7994; do ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || die "carrier SOCKS/$p missing"; done
 systemctl enable --now dual-xudp-bridge.service >/dev/null
 sleep 1
-for p in 7991 7992; do ss -H -ltn "sport = :$p" | grep -q . || die "XUDP SOCKS/$p missing"; done
+for p in 7991 7992; do ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || die "XUDP SOCKS/$p missing"; done
 systemctl enable --now dual-dispatcher.service >/dev/null
 sleep 2
-ss -H -ltn 'sport = :7990' | grep -q . || { journalctl -u dual-dispatcher -n 100 --no-pager >&2 || true; die "dispatcher SOCKS/7990 missing"; }
+ss -H -ltn 'sport = :7990' 2>/dev/null | grep -q . || { journalctl -u dual-dispatcher -n 100 --no-pager >&2 || true; die "dispatcher SOCKS/7990 missing"; }
 
 install -m 0755 "$B/dual-probe.sh" /usr/local/sbin/dual-tunnel-probe
 install -m 0755 "$B/status.sh" /usr/local/sbin/dual-tunnel-status
 install -m 0755 "$B/failover-test.sh" /usr/local/sbin/dual-tunnel-failover-test
-log "Running quick end-to-end probe"
+
+log "Running quick end-to-end forced-path probe"
 /usr/local/sbin/dual-tunnel-probe --quick
 
 unset TRUST_PASS MIERU_PASS TRUST_UUID MIERU_UUID CONTROLLER_SECRET
@@ -311,5 +327,6 @@ log "SUCCESS: Iran dual tunnel installed without touching x-ui"
 log "Entry SOCKS: 127.0.0.1:7990"
 log "Forced paths: Trust=7991, Mieru=7992"
 log "Next: sudo dual-tunnel-probe --full"
-log "Only after full probe passes, run attach-xui.sh explicitly."
+log "Then on the empty test Iran only: sudo dual-tunnel-failover-test"
+log "Only after both pass, run attach-xui.sh explicitly."
 trap - EXIT
