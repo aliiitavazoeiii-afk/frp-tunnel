@@ -9,14 +9,28 @@ log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
 
 probe_http(){
-  local port=$1 label=$2 url=$3 expect=${4:-any} code
-  code=$(curl -4 -sS -L --socks5-hostname "127.0.0.1:$port" --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' "$url" || true)
-  if [[ "$expect" == 204 ]]; then
-    [[ "$code" == 204 ]] || die "$label failed HTTP=${code:-000}"
-  else
-    [[ "$code" =~ ^[234][0-9][0-9]$ ]] || die "$label failed HTTP=${code:-000}"
-  fi
-  log "$label = OK (HTTP=$code)"
+  local port=$1 label=$2 url=$3 expect=${4:-any} attempts=${5:-3} code attempt ok
+  for attempt in $(seq 1 "$attempts"); do
+    code=$(curl -4 -sS -L --socks5-hostname "127.0.0.1:$port" --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' "$url" || true)
+    ok=0
+    if [[ "$expect" == 204 ]]; then
+      [[ "$code" == 204 ]] && ok=1
+    else
+      [[ "$code" =~ ^[234][0-9][0-9]$ ]] && ok=1
+    fi
+    if (( ok == 1 )); then
+      if (( attempt > 1 )); then
+        log "$label recovered on attempt $attempt/$attempts"
+      fi
+      log "$label = OK (HTTP=$code)"
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      log "$label transient failure HTTP=${code:-000}; retry $((attempt+1))/$attempts"
+      sleep "$attempt"
+    fi
+  done
+  die "$label failed after $attempts attempts HTTP=${code:-000}"
 }
 
 probe_udp(){
