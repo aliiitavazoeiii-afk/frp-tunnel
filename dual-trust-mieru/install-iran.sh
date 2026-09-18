@@ -208,6 +208,19 @@ for _ in $(seq 1 60); do
   sleep 0.25
 done
 ss -H -ltn 'sport = :7993' 2>/dev/null | grep -q . || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel SOCKS/7993 did not start"; }
+
+# The SOCKS listener can appear slightly before the TrustTunnel session reaches
+# CONNECTED. Wait for the actual carrier state so preflight does not race startup.
+for _ in $(seq 1 80); do
+  grep -Eq 'VPN_SS_CONNECTED|Successfully connected to endpoint' "$D/trust-candidate.log" 2>/dev/null && break
+  kill -0 "$TPID" 2>/dev/null || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel client candidate exited before CONNECTED"; }
+  sleep 0.25
+done
+grep -Eq 'VPN_SS_CONNECTED|Successfully connected to endpoint' "$D/trust-candidate.log" 2>/dev/null || {
+  tail -n 100 "$D/trust-candidate.log" >&2 || true
+  die "TrustTunnel client did not reach CONNECTED state"
+}
+
 code=$(curl -4 -sS --socks5-hostname 127.0.0.1:7993 --connect-timeout 8 --max-time 25 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
 [[ "$code" == 204 ]] || { tail -n 100 "$D/trust-candidate.log" >&2 || true; die "TrustTunnel direct carrier preflight failed HTTP=$code"; }
 kill "$TPID" 2>/dev/null || true; wait "$TPID" 2>/dev/null || true; TPID=""
