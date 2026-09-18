@@ -33,7 +33,7 @@ cleanup_install(){
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
     rm -rf "$D"
-    rm -f /usr/local/sbin/dual-tunnel-probe /usr/local/sbin/dual-tunnel-status /usr/local/sbin/dual-tunnel-failover-test
+    rm -f /usr/local/sbin/dual-tunnel-probe /usr/local/sbin/dual-tunnel-status /usr/local/sbin/dual-tunnel-failover-test /usr/local/sbin/dual-tunnel-replace-foreign
   fi
   exit "$rc"
 }
@@ -333,6 +333,7 @@ ss -H -ltn 'sport = :7990' 2>/dev/null | grep -q . || { journalctl -u dual-dispa
 install -m 0755 "$B/dual-probe.sh" /usr/local/sbin/dual-tunnel-probe
 install -m 0755 "$B/status.sh" /usr/local/sbin/dual-tunnel-status
 install -m 0755 "$B/failover-test.sh" /usr/local/sbin/dual-tunnel-failover-test
+install -m 0755 "$B/replace-foreign.sh" /usr/local/sbin/dual-tunnel-replace-foreign
 
 log "Running quick end-to-end forced-path probe"
 /usr/local/sbin/dual-tunnel-probe --quick
