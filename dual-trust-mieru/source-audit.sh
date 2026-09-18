@@ -31,7 +31,7 @@ fi
 
 echo
 echo "--- required project files ---"
-for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-iran.sh dual-probe.sh failover-test.sh status.sh attach-xui.sh uninstall-iran.sh; do
+for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-iran.sh dual-probe.sh failover-test.sh status.sh attach-xui.sh replace-foreign.sh uninstall-iran.sh; do
   [[ -s "$f" ]] || { echo "missing: $f" >&2; exit 1; }
   echo "OK $f"
 done
