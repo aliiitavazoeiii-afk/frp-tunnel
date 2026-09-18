@@ -24,7 +24,9 @@ cleanup_install(){
   [[ -n "$TPID" ]] && wait "$TPID" 2>/dev/null || true
   [[ -n "$MPID" ]] && wait "$MPID" 2>/dev/null || true
   if (( rc != 0 )); then
-    log "Install failed; removing only partial dual Iran services/config. x-ui was never touched."
+    log "Install failed; recent dual Iran service logs follow before cleanup. x-ui was never touched."
+    journalctl -u dual-trust-client.service -u dual-mieru-carrier.service -u dual-xudp-bridge.service -u dual-dispatcher.service -n 120 --no-pager 2>/dev/null || true
+    log "Removing only partial dual Iran services/config. x-ui was never touched."
     for svc in "${SERVICES[@]}"; do
       systemctl disable --now "$svc.service" >/dev/null 2>&1 || true
       rm -f "/etc/systemd/system/$svc.service"
@@ -132,7 +134,7 @@ chmod 0600 "$D/mieru-carrier.yaml"
 
 cat > "$D/xudp.json" <<EOF2
 {
-  "log":{"loglevel":"warning"},
+  "log":{"loglevel":"info"},
   "inbounds":[
     {"tag":"trust-in","listen":"127.0.0.1","port":7991,"protocol":"socks","settings":{"auth":"noauth","udp":true}},
     {"tag":"mieru-in","listen":"127.0.0.1","port":7992,"protocol":"socks","settings":{"auth":"noauth","udp":true}}
@@ -140,8 +142,8 @@ cat > "$D/xudp.json" <<EOF2
   "outbounds":[
     {"tag":"xudp-trust","protocol":"vless","settings":{"address":"127.0.0.1","port":2443,"id":"$TRUST_UUID","encryption":"none"},"streamSettings":{"network":"raw","sockopt":{"dialerProxy":"carrier-trust"}},"mux":{"enabled":true,"concurrency":-1,"xudpConcurrency":16,"xudpProxyUDP443":"allow"}},
     {"tag":"xudp-mieru","protocol":"vless","settings":{"address":"127.0.0.1","port":2443,"id":"$MIERU_UUID","encryption":"none"},"streamSettings":{"network":"raw","sockopt":{"dialerProxy":"carrier-mieru"}},"mux":{"enabled":true,"concurrency":-1,"xudpConcurrency":16,"xudpProxyUDP443":"allow"}},
-    {"tag":"carrier-trust","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":7993,"users":[]}]}},
-    {"tag":"carrier-mieru","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":7994,"users":[]}]}}
+    {"tag":"carrier-trust","protocol":"socks","settings":{"address":"127.0.0.1","port":7993}},
+    {"tag":"carrier-mieru","protocol":"socks","settings":{"address":"127.0.0.1","port":7994}}
   ],
   "routing":{"domainStrategy":"AsIs","rules":[
     {"type":"field","inboundTag":["trust-in"],"outboundTag":"xudp-trust"},
