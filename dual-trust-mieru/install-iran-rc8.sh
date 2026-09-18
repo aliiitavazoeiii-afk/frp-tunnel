@@ -38,7 +38,7 @@ PY
 }
 trap cleanup EXIT
 
-if ! grep -Fqx "$HOST_LINE" /etc/hosts; then
+if ! getent ahostsv4 "$HOSTNAME" 2>/dev/null | awk '{print $1}' | grep -Fxq '127.0.0.1'; then
   printf '%s\n' "$HOST_LINE" >> /etc/hosts
   HOST_ADDED=1
 fi
