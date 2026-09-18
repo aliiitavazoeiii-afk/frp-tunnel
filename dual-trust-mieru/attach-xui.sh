@@ -10,10 +10,10 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run as root"
 [[ -f "$XUI_DB" && -f "$XUI_RUNTIME" ]] || die "x-ui DB/runtime config missing"
 systemctl is-active --quiet x-ui || die "x-ui inactive"
-for s in dual-trust-client dual-mieru-client dual-xudp-bridge dual-dispatcher; do
+for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher; do
   systemctl is-active --quiet "$s" || die "$s inactive"
 done
-ss -H -ltn 'sport = :7990' | grep -q . || die "dual entry SOCKS/7990 missing"
+ss -H -ltn 'sport = :7990' 2>/dev/null | grep -q . || die "dual entry SOCKS/7990 missing"
 [[ -x /usr/local/sbin/dual-tunnel-probe ]] || die "dual-tunnel-probe missing"
 
 log "Full dual-path precheck before touching x-ui"
@@ -77,8 +77,6 @@ try:
     rules.insert(0,{'type':'field','inboundTag':[tag],'outboundTag':'dual-tunnel'})
     con.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(json.dumps(cfg,separators=(',',':')),))
 
-    # Enable the same hostname-preserving sniffing state that previously fixed
-    # Google/YouTube: http/tls/quic/fakedns, metadataOnly=false, routeOnly=false.
     tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
     candidates=[]
     for t in tables:
@@ -109,14 +107,14 @@ PY
 systemctl start x-ui
 sleep 4
 systemctl is-active --quiet x-ui || die "x-ui inactive after attach"
-ss -H -ltn 'sport = :443' | grep -q . || die "public x-ui TCP/443 missing"
+ss -H -ltn 'sport = :443' 2>/dev/null | grep -q . || die "public x-ui TCP/443 missing"
 
 INBOUND_TAG="$INBOUND_TAG" python3 <<'PY'
 import json,os
 cfg=json.load(open('/usr/local/x-ui/bin/config.json')); tag=os.environ['INBOUND_TAG']
 obs=[o for o in cfg.get('outbounds',[]) if o.get('tag')=='dual-tunnel']
 if len(obs)!=1: raise SystemExit(f'expected one dual-tunnel outbound, found {len(obs)}')
-o=obs[0]; st=o.get('settings',{}); sv=st.get('servers') or []
+o=obs[0]; sv=o.get('settings',{}).get('servers') or []
 if not sv or sv[0].get('address')!='127.0.0.1' or int(sv[0].get('port',0))!=7990: raise SystemExit('runtime dual-tunnel SOCKS target wrong')
 if o.get('targetStrategy')!='AsIs': raise SystemExit('runtime targetStrategy is not AsIs')
 rules=cfg.get('routing',{}).get('rules',[])
