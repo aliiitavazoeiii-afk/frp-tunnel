@@ -71,12 +71,26 @@ UNIT=anytls-transport-canary-$LOWER.service
 UNIT_PATH=/etc/systemd/system/$UNIT
 CLIENT=/root/bucket5-$LOWER-canary-client.json
 REMOVE=/usr/local/sbin/bucket5-transport-canary-$LOWER-remove
-[[ ! -e "$DIR" && ! -e "$UNIT_PATH" ]] || die "existing $NODE canary found; remove it first with $REMOVE if appropriate"
+[[ ! -e "$UNIT_PATH" ]] || die "existing $NODE canary unit found; remove it first with $REMOVE if appropriate"
+# A failed pre-activation validation from an older canary script may have left
+# only an empty/stale data directory. It is safe to remove when no unit exists.
+if [[ -d "$DIR" ]]; then
+  log "Removing stale pre-activation canary directory $DIR"
+  rm -rf "$DIR"
+fi
 
 TMP=$(mktemp -d /tmp/bucket5-transport-sidecar.XXXXXX)
 cleanup(){ rm -rf "$TMP"; }
 trap cleanup EXIT
 umask 077
+# Candidate validation runs as the unprivileged service user. The mktemp parent
+# defaults to 0700/root, so explicitly grant traverse only to the service group.
+chgrp anytls-tunnel "$TMP"
+chmod 0750 "$TMP"
+VDIR=$TMP/validate-data
+mkdir -p "$VDIR"
+chown anytls-tunnel:anytls-tunnel "$VDIR"
+chmod 0750 "$VDIR"
 
 ALT_ANYTLS=$(openssl rand -hex 24)
 ALT_LAYER=$(openssl rand -hex 24)
@@ -179,13 +193,22 @@ rules:
   - MATCH,DIRECT
 YAML
 
-mkdir -p "$DIR"
-chown anytls-tunnel:anytls-tunnel "$DIR"
-chmod 0750 "$DIR"
 chown anytls-tunnel:anytls-tunnel "$CAND"
 chmod 0600 "$CAND"
 log "Validating $NODE sidecar candidate; production :443 is untouched"
-runuser -u anytls-tunnel -- "$M" -t -d "$DIR" -f "$CAND" >/dev/null || die "sidecar candidate config invalid; production untouched"
+VALIDATE_LOG=$TMP/mihomo-validate.log
+if ! runuser -u anytls-tunnel -- "$M" -t -d "$VDIR" -f "$CAND" >"$VALIDATE_LOG" 2>&1; then
+  echo "----- Mihomo candidate validation -----" >&2
+  tail -n 120 "$VALIDATE_LOG" >&2 || true
+  echo "----------------------------------------" >&2
+  die "sidecar candidate config invalid; production untouched"
+fi
+log "Candidate validation = OK"
+
+# Only after validation succeeds do we create persistent sidecar state.
+mkdir -p "$DIR"
+chown anytls-tunnel:anytls-tunnel "$DIR"
+chmod 0750 "$DIR"
 install -o anytls-tunnel -g anytls-tunnel -m 0600 "$CAND" "$DIR/config.yaml"
 
 cat >"$UNIT_PATH" <<UNIT
