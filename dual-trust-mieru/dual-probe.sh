@@ -75,11 +75,23 @@ PY
 }
 
 probe_transfer(){
-  local port=$1 label=$2 code size secs
-  read -r code size secs < <(curl -4 -sS -L --socks5-hostname "127.0.0.1:$port" --connect-timeout 8 --max-time 30 \
-    -o /dev/null -w '%{http_code} %{size_download} %{time_total}\n' 'https://speed.cloudflare.com/__down?bytes=1000000' || echo '000 0 99')
-  [[ "$code" == 200 && "$size" =~ ^[0-9]+$ && "$size" -ge 750000 ]] || die "$label transfer failed HTTP=$code bytes=$size time=$secs"
-  log "$label transfer = OK (${size} bytes in ${secs}s)"
+  local port=$1 label=$2 attempts=${3:-3} code size secs attempt
+  for attempt in $(seq 1 "$attempts"); do
+    read -r code size secs < <(curl -4 -sS -L --socks5-hostname "127.0.0.1:$port" --connect-timeout 8 --max-time 30 \
+      -o /dev/null -w '%{http_code} %{size_download} %{time_total}\n' 'https://speed.cloudflare.com/__down?bytes=1000000' || echo '000 0 99')
+    if [[ "$code" == 200 && "$size" =~ ^[0-9]+$ && "$size" -ge 750000 ]]; then
+      if (( attempt > 1 )); then
+        log "$label transfer recovered on attempt $attempt/$attempts"
+      fi
+      log "$label transfer = OK (${size} bytes in ${secs}s)"
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      log "$label transfer transient failure HTTP=$code bytes=$size time=$secs; retry $((attempt+1))/$attempts"
+      sleep "$attempt"
+    fi
+  done
+  die "$label transfer failed after $attempts attempts HTTP=$code bytes=$size time=$secs"
 }
 
 for p in "$ENTRY_PORT" "$TRUST_PORT" "$MIERU_PORT"; do
