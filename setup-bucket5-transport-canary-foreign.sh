@@ -66,7 +66,8 @@ for p in "$CONTROL_PORT" "$ALT_PORT" "$REALITY_PORT"; do
 done
 
 LOWER=${NODE,,}
-DIR=/etc/anytls-transport-canary/$LOWER
+ROOT=/etc/anytls-transport-canary
+DIR=$ROOT/$LOWER
 UNIT=anytls-transport-canary-$LOWER.service
 UNIT_PATH=/etc/systemd/system/$UNIT
 CLIENT=/root/bucket5-$LOWER-canary-client.json
@@ -206,7 +207,11 @@ fi
 log "Candidate validation = OK"
 
 # Only after validation succeeds do we create persistent sidecar state.
-mkdir -p "$DIR"
+# ROOT is created while umask=077, so explicitly make it traversable by the
+# service group; otherwise systemd cannot chdir into the per-node directory.
+mkdir -p "$ROOT" "$DIR"
+chown root:anytls-tunnel "$ROOT"
+chmod 0750 "$ROOT"
 chown anytls-tunnel:anytls-tunnel "$DIR"
 chmod 0750 "$DIR"
 install -o anytls-tunnel -g anytls-tunnel -m 0600 "$CAND" "$DIR/config.yaml"
@@ -273,6 +278,7 @@ systemctl disable --now '$UNIT' >/dev/null 2>&1 || true
 rm -f '$UNIT_PATH'
 systemctl daemon-reload
 rm -rf '$DIR'
+rmdir '$ROOT' 2>/dev/null || true
 echo 'Removed $NODE transport canary sidecar. Production anytls-tunnel was not modified.'
 ROLL
 chmod 0700 "$REMOVE"
