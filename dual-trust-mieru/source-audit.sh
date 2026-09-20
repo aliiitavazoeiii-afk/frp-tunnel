@@ -28,10 +28,12 @@ grep -q 'multiplexing: MULTIPLEXING_OFF' replace-foreign-final.sh || { echo 'rep
 grep -q 'MULTIPLEXING_OFF' migrate-live-final.sh || { echo 'live migration missing Mieru mux OFF' >&2; exit 1; }
 grep -q "'network':'tcp'.*'carrier-trust'" migrate-live-final.sh || { echo 'live migration missing Trust TCP direct rule' >&2; exit 1; }
 grep -q "'network':'udp'.*'xudp-trust'" migrate-live-final.sh || { echo 'live migration missing Trust UDP XUDP rule' >&2; exit 1; }
+grep -q '^resilient(){' migrate-live-final.sh || { echo 'live migration missing transient-safe validator' >&2; exit 1; }
+grep -q 'for attempt in 1 2 3' migrate-live-final.sh || { echo 'live migration validator missing retry loop' >&2; exit 1; }
 grep -q 'dual-tunnel-autoheal' install-autoheal.sh || { echo 'auto-heal installer missing timer service' >&2; exit 1; }
 grep -q 'dual-trust-client.service' dual-autoheal.sh || { echo 'auto-heal missing selective Trust restart' >&2; exit 1; }
 grep -q 'dual-mieru-carrier.service' dual-autoheal.sh || { echo 'auto-heal missing selective Mieru restart' >&2; exit 1; }
-echo 'final split architecture + auto-heal assertions = OK'
+echo 'final split architecture + resilient validation + auto-heal assertions = OK'
 
 echo
 echo "--- required final files ---"
