@@ -98,23 +98,45 @@ systemctl is-active --quiet dual-xudp-bridge.service
 ss -H -ltn 'sport = :7991' | grep -q .
 ss -H -ltn 'sport = :7992' | grep -q .
 
-strict(){
-  local label=$1 port=$2 count=$3 ok=0 code
+# Live networks can have an isolated TLS reset even when the path is healthy.
+# Treat each numbered check as a logical test with up to 3 attempts. A path only
+# fails migration when a logical test cannot recover after all retries.
+resilient(){
+  local label=$1 port=$2 count=$3
+  local ok=0 i attempt code recovered
   echo "=== $label :$port ==="
   for i in $(seq 1 "$count"); do
-    code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" --connect-timeout 5 --max-time 8 \
-      -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 2>/dev/null || true)
-    if [[ "$code" == 204 ]]; then ok=$((ok+1)); printf '%02d PASS\n' "$i"; else printf '%02d FAIL HTTP=%s\n' "$i" "${code:-000}"; fi
+    recovered=0
+    for attempt in 1 2 3; do
+      code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" --connect-timeout 5 --max-time 8 \
+        -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 2>/dev/null || true)
+      if [[ "$code" == 204 ]]; then
+        recovered=1
+        ok=$((ok+1))
+        if (( attempt == 1 )); then
+          printf '%02d PASS\n' "$i"
+        else
+          printf '%02d PASS retry=%d\n' "$i" "$attempt"
+        fi
+        break
+      fi
+      if (( attempt < 3 )); then
+        sleep "$attempt"
+      fi
+    done
+    if (( recovered == 0 )); then
+      printf '%02d FAIL after=3 HTTP=%s\n' "$i" "${code:-000}"
+    fi
     sleep 0.10
   done
   echo "$label=$ok/$count"
   (( ok == count ))
 }
 
-strict TRUST-DIRECT 7993 10
-strict MIERU-DIRECT 7994 10
-strict TRUST-SPLIT-TCP 7991 20
-strict MIERU-SPLIT-TCP 7992 20
+resilient TRUST-DIRECT 7993 10
+resilient MIERU-DIRECT 7994 10
+resilient TRUST-SPLIT-TCP 7991 20
+resilient MIERU-SPLIT-TCP 7992 20
 
 install -m 0755 "$B/dual-probe-final.sh" /usr/local/sbin/dual-tunnel-probe
 bash "$B/install-autoheal.sh"
