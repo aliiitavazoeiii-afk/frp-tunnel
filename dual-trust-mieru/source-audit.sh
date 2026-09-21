@@ -33,11 +33,12 @@ grep -q 'for attempt in 1 2 3' migrate-live-final.sh || { echo 'live migration v
 grep -q 'dual-tunnel-autoheal' install-autoheal.sh || { echo 'auto-heal installer missing timer service' >&2; exit 1; }
 grep -q 'dual-trust-client.service' dual-autoheal.sh || { echo 'auto-heal missing selective Trust restart' >&2; exit 1; }
 grep -q 'dual-mieru-carrier.service' dual-autoheal.sh || { echo 'auto-heal missing selective Mieru restart' >&2; exit 1; }
-echo 'final split architecture + resilient validation + auto-heal assertions = OK'
+grep -q 'chmod 0755.*dual-probe.sh' attach-xui-final.sh || { echo 'final x-ui attach wrapper missing probe executable normalization' >&2; exit 1; }
+echo 'final split architecture + resilient validation + auto-heal + x-ui attach assertions = OK'
 
 echo
 echo "--- required final files ---"
-for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-foreign-mieru-final.sh install-iran.sh install-iran-final.sh install-iran-stable.sh dual-probe-final.sh dual-autoheal.sh install-autoheal.sh migrate-live-final.sh failover-test.sh status.sh attach-xui.sh replace-foreign-final.sh diagnose-mieru.sh uninstall-iran.sh; do
+for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-foreign-mieru-final.sh install-iran.sh install-iran-final.sh install-iran-stable.sh dual-probe-final.sh dual-autoheal.sh install-autoheal.sh migrate-live-final.sh failover-test.sh status.sh attach-xui.sh attach-xui-final.sh replace-foreign-final.sh diagnose-mieru.sh uninstall-iran.sh; do
   [[ -s "$f" ]] || { echo "missing: $f" >&2; exit 1; }
   echo "OK $f"
 done
