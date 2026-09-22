@@ -37,11 +37,18 @@ grep -q 'chmod 0755.*dual-probe.sh' attach-xui-final.sh || { echo 'final x-ui at
 grep -q '^probe_udp_once(){' dual-probe-final.sh || { echo 'final probe missing isolated UDP/XUDP attempt helper' >&2; exit 1; }
 grep -q '^probe_udp(){' dual-probe-final.sh || { echo 'final probe missing UDP/XUDP retry wrapper' >&2; exit 1; }
 grep -q 'UDP/XUDP transient failure; retry' dual-probe-final.sh || { echo 'final probe missing transient UDP retry handling' >&2; exit 1; }
-echo 'final split architecture + resilient validation + auto-heal + x-ui attach + UDP retry assertions = OK'
+
+grep -q 'net.ipv4.tcp_mtu_probing' host-optimizer.sh || { echo 'host optimizer missing safe PLPMTUD fallback' >&2; exit 1; }
+grep -q 'net.ipv4.tcp_congestion_control' host-optimizer.sh || { echo 'host optimizer missing congestion-control capability handling' >&2; exit 1; }
+grep -q 'PASS: tunnel/x-ui PID/state/restart counters unchanged' host-optimizer.sh || { echo 'host optimizer missing PID safety verification' >&2; exit 1; }
+! grep -Eq 'systemctl[[:space:]]+(restart|stop|disable)|tc[[:space:]]+qdisc[[:space:]]+(replace|del|change)|ip[[:space:]]+link[[:space:]]+set|iptables|nft[[:space:]]' host-optimizer.sh || { echo 'host optimizer contains a disruptive network/service action' >&2; exit 1; }
+! grep -q '/etc/dual-trust-mieru' host-optimizer.sh || { echo 'host optimizer must not modify/read tunnel config tree' >&2; exit 1; }
+
+echo 'final split architecture + resilient validation + auto-heal + x-ui attach + UDP retry + host optimizer assertions = OK'
 
 echo
 echo "--- required final files ---"
-for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-foreign-mieru-final.sh install-iran.sh install-iran-final.sh install-iran-stable.sh dual-probe-final.sh dual-autoheal.sh install-autoheal.sh migrate-live-final.sh failover-test.sh status.sh attach-xui.sh attach-xui-final.sh replace-foreign-final.sh diagnose-mieru.sh uninstall-iran.sh; do
+for f in common.sh install-foreign-trust.sh install-foreign-mieru.sh install-foreign-mieru-final.sh install-iran.sh install-iran-final.sh install-iran-stable.sh dual-probe-final.sh dual-autoheal.sh install-autoheal.sh migrate-live-final.sh failover-test.sh status.sh attach-xui.sh attach-xui-final.sh replace-foreign-final.sh diagnose-mieru.sh host-optimizer.sh uninstall-iran.sh; do
   [[ -s "$f" ]] || { echo "missing: $f" >&2; exit 1; }
   echo "OK $f"
 done
