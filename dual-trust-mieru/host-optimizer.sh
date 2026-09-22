@@ -28,7 +28,7 @@ SYSCTLS=(
 
 service_snapshot(){
   for s in "${SERVICES[@]}"; do
-    if systemctl list-unit-files "$s.service" >/dev/null 2>&1 || systemctl status "$s.service" >/dev/null 2>&1; then
+    if systemctl status "$s.service" >/dev/null 2>&1; then
       printf '%s\t' "$s"
       systemctl show "$s.service" -p MainPID -p ActiveState -p NRestarts --value 2>/dev/null | paste -sd',' - || true
     fi
@@ -59,7 +59,7 @@ audit(){
 
   IFACE=$(ip route show default 2>/dev/null | awk 'NR==1{print $5}')
   echo
-  echo "=== NETWORK INTERFACE ==="
+  echo '=== NETWORK INTERFACE ==='
   echo "default_iface=${IFACE:-unknown}"
   if [[ -n "${IFACE:-}" ]]; then
     ip -s -s link show dev "$IFACE" || true
@@ -75,10 +75,15 @@ audit(){
 
   echo
   echo '=== SOFTNET ==='
-  awk '
-    {p+=strtonum("0x"$1); d+=strtonum("0x"$2); t+=strtonum("0x"$3)}
-    END{printf "processed=%d dropped=%d time_squeeze=%d\n",p,d,t}
-  ' /proc/net/softnet_stat 2>/dev/null || true
+  python3 - <<'PY' 2>/dev/null || true
+p=d=t=0
+with open('/proc/net/softnet_stat') as f:
+    for line in f:
+        x=line.split()
+        if len(x) >= 3:
+            p += int(x[0],16); d += int(x[1],16); t += int(x[2],16)
+print(f'processed={p} dropped={d} time_squeeze={t}')
+PY
 
   echo
   echo '=== TUNNEL SERVICE STATE (read-only) ==='
@@ -87,7 +92,7 @@ audit(){
   echo
   echo '=== NOTES ==='
   echo '- audit changes nothing'
-  echo '- optimizer never changes MTU, routes, firewall, tunnel config, x-ui config, or interface qdisc'
+  echo '- optimizer never changes MTU, routes, firewall, tunnel config, x-ui config, or the live interface qdisc'
   echo '- optimizer never stops/restarts tunnel or x-ui services'
 }
 
@@ -113,7 +118,7 @@ net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.ipv4.tcp_rmem = 4096 131072 16777216
 net.ipv4.tcp_wmem = 4096 16384 16777216
-net.core.netdev_max_backlog = 8192
+net.core.netdev_max_backlog = 4096
 net.core.somaxconn = 4096
 net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_syncookies = 1
@@ -155,12 +160,17 @@ apply(){
   log "Snapshot: $BK"
   log 'No tunnel/x-ui service will be restarted or stopped.'
 
-  # Load optional kernel modules only. This does not restart services or replace the live NIC qdisc.
+  # Loading modules is non-disruptive. We intentionally do not replace the live NIC qdisc.
   modprobe tcp_bbr >/dev/null 2>&1 || true
   modprobe sch_fq >/dev/null 2>&1 || true
   AVAILABLE=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || true)
   USE_BBR=0
-  if grep -qw bbr <<<"$AVAILABLE"; then USE_BBR=1; fi
+  if grep -qw bbr <<<"$AVAILABLE" && sysctl_exists net.core.default_qdisc; then
+    if sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1; then
+      USE_BBR=1
+      log 'SET net.core.default_qdisc=fq (default only; live interface qdisc untouched)'
+    fi
+  fi
 
   write_conf "$USE_BBR"
 
@@ -170,19 +180,18 @@ apply(){
   apply_one net.core.wmem_max 16777216
   apply_one net.ipv4.tcp_rmem '4096 131072 16777216'
   apply_one net.ipv4.tcp_wmem '4096 16384 16777216'
-  apply_one net.core.netdev_max_backlog 8192
+  apply_one net.core.netdev_max_backlog 4096
   apply_one net.core.somaxconn 4096
   apply_one net.ipv4.tcp_max_syn_backlog 8192
   apply_one net.ipv4.tcp_syncookies 1
   apply_one vm.swappiness 10
 
   if (( USE_BBR == 1 )); then
-    apply_one net.core.default_qdisc fq
     apply_one net.ipv4.tcp_congestion_control bbr
     log 'BBR is available and selected as the default for new TCP sockets.'
-    log 'The existing interface qdisc was intentionally NOT replaced, so active traffic is not disturbed.'
+    log 'Existing TCP sockets and the live interface qdisc are not replaced.'
   else
-    log "BBR unavailable on this kernel; current congestion control preserved: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
+    log "BBR unavailable/not safely selectable; congestion control preserved: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
   fi
 
   ln -sfn "$BK" "$STATE/latest"
@@ -191,7 +200,7 @@ apply(){
   echo
   echo '=== SERVICE PID SAFETY CHECK ==='
   if cmp -s "$BK/services.before" "$BK/services.after"; then
-    echo 'PASS: tunnel/x-ui service PID/state/restart counters unchanged.'
+    echo 'PASS: tunnel/x-ui PID/state/restart counters unchanged.'
   else
     echo 'NOTICE: service snapshot changed while optimizer ran; optimizer issued no stop/restart commands.'
     echo '--- before ---'; cat "$BK/services.before" || true
@@ -231,8 +240,7 @@ housekeeping(){
   log 'Housekeeping only: no service stops/restarts.'
   command -v journalctl >/dev/null 2>&1 && journalctl --vacuum-time=14d >/dev/null 2>&1 || true
   command -v apt-get >/dev/null 2>&1 && apt-get clean >/dev/null 2>&1 || true
-  find /tmp -xdev -type f -atime +7 -delete 2>/dev/null || true
-  echo 'SUCCESS: conservative disk/cache housekeeping complete.'
+  echo 'SUCCESS: conservative journal/package-cache housekeeping complete.'
 }
 
 case "$MODE" in
