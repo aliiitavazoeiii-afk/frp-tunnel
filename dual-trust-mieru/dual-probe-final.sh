@@ -23,10 +23,10 @@ probe_http(){
   die "$label failed after $attempts attempts HTTP=${code:-000}"
 }
 
-probe_udp(){
+probe_udp_once(){
   local port=$1 label=$2
   PROBE_SOCKS_PORT=$port PROBE_LABEL=$label python3 <<'PY'
-import os,random,socket,struct,time
+import os,random,socket,struct,time,sys
 h='127.0.0.1'; p=int(os.environ['PROBE_SOCKS_PORT']); label=os.environ['PROBE_LABEL']
 def recvn(s,n):
     b=b''
@@ -35,33 +35,52 @@ def recvn(s,n):
         if not x: raise RuntimeError('SOCKS closed')
         b+=x
     return b
-s=socket.create_connection((h,p),timeout=5); s.sendall(b'\x05\x01\x00')
-if recvn(s,2)!=b'\x05\x00': raise RuntimeError('SOCKS auth failed')
-s.sendall(b'\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00')
-_,rep,_,at=recvn(s,4)
-if rep: raise RuntimeError(f'UDP ASSOCIATE reply={rep}')
-if at==1: relay=socket.inet_ntoa(recvn(s,4))
-elif at==3: relay=recvn(s,recvn(s,1)[0]).decode()
-elif at==4: relay=socket.inet_ntop(socket.AF_INET6,recvn(s,16))
-else: raise RuntimeError('bad ATYP')
-rport=struct.unpack('!H',recvn(s,2))[0]
-if relay in ('0.0.0.0','::'): relay=h
-qid=random.randrange(65536)
-qname=b''.join(bytes([len(x)])+x.encode() for x in 'youtube.com'.split('.'))+b'\0'
-dns=struct.pack('!HHHHHH',qid,0x0100,1,0,0,0)+qname+struct.pack('!HH',1,1)
-pkt=b'\0\0\0\1'+socket.inet_aton('1.1.1.1')+struct.pack('!H',53)+dns
-u=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); u.settimeout(8); t=time.time(); u.sendto(pkt,(relay,rport)); data,_=u.recvfrom(65535)
-pos=4; rat=data[3]
-if rat==1: pos+=4
-elif rat==3: pos+=1+data[pos]
-elif rat==4: pos+=16
-else: raise RuntimeError('bad reply ATYP')
-pos+=2; d=data[pos:]
-if len(d)<12: raise RuntimeError('short DNS reply')
-rid,flags=struct.unpack('!HH',d[:4])
-if rid!=qid or not(flags&0x8000): raise RuntimeError('invalid DNS reply')
-print(f'[{time.strftime("%F %T")}] {label} UDP/XUDP = OK ({time.time()-t:.3f}s, rcode={flags&15})')
+try:
+    s=socket.create_connection((h,p),timeout=5); s.sendall(b'\x05\x01\x00')
+    if recvn(s,2)!=b'\x05\x00': raise RuntimeError('SOCKS auth failed')
+    s.sendall(b'\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00')
+    _,rep,_,at=recvn(s,4)
+    if rep: raise RuntimeError(f'UDP ASSOCIATE reply={rep}')
+    if at==1: relay=socket.inet_ntoa(recvn(s,4))
+    elif at==3: relay=recvn(s,recvn(s,1)[0]).decode()
+    elif at==4: relay=socket.inet_ntop(socket.AF_INET6,recvn(s,16))
+    else: raise RuntimeError('bad ATYP')
+    rport=struct.unpack('!H',recvn(s,2))[0]
+    if relay in ('0.0.0.0','::'): relay=h
+    qid=random.randrange(65536)
+    qname=b''.join(bytes([len(x)])+x.encode() for x in 'youtube.com'.split('.'))+b'\0'
+    dns=struct.pack('!HHHHHH',qid,0x0100,1,0,0,0)+qname+struct.pack('!HH',1,1)
+    pkt=b'\0\0\0\1'+socket.inet_aton('1.1.1.1')+struct.pack('!H',53)+dns
+    u=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); u.settimeout(8); t=time.time(); u.sendto(pkt,(relay,rport)); data,_=u.recvfrom(65535)
+    pos=4; rat=data[3]
+    if rat==1: pos+=4
+    elif rat==3: pos+=1+data[pos]
+    elif rat==4: pos+=16
+    else: raise RuntimeError('bad reply ATYP')
+    pos+=2; d=data[pos:]
+    if len(d)<12: raise RuntimeError('short DNS reply')
+    rid,flags=struct.unpack('!HH',d[:4])
+    if rid!=qid or not(flags&0x8000): raise RuntimeError('invalid DNS reply')
+    print(f'[{time.strftime("%F %T")}] {label} UDP/XUDP = OK ({time.time()-t:.3f}s, rcode={flags&15})')
+except Exception as e:
+    print(f'{label} UDP/XUDP attempt failed: {type(e).__name__}: {e}', file=sys.stderr)
+    sys.exit(1)
 PY
+}
+
+probe_udp(){
+  local port=$1 label=$2 attempts=${3:-3} attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if probe_udp_once "$port" "$label"; then
+      if (( attempt > 1 )); then log "$label UDP/XUDP recovered on attempt $attempt/$attempts"; fi
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      log "$label UDP/XUDP transient failure; retry $((attempt+1))/$attempts"
+      sleep "$attempt"
+    fi
+  done
+  die "$label UDP/XUDP failed after $attempts attempts"
 }
 
 probe_transfer(){
