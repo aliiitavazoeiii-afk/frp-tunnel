@@ -34,7 +34,10 @@ grep -q 'dual-tunnel-autoheal' install-autoheal.sh || { echo 'auto-heal installe
 grep -q 'dual-trust-client.service' dual-autoheal.sh || { echo 'auto-heal missing selective Trust restart' >&2; exit 1; }
 grep -q 'dual-mieru-carrier.service' dual-autoheal.sh || { echo 'auto-heal missing selective Mieru restart' >&2; exit 1; }
 grep -q 'chmod 0755.*dual-probe.sh' attach-xui-final.sh || { echo 'final x-ui attach wrapper missing probe executable normalization' >&2; exit 1; }
-echo 'final split architecture + resilient validation + auto-heal + x-ui attach assertions = OK'
+grep -q '^probe_udp_once(){' dual-probe-final.sh || { echo 'final probe missing isolated UDP/XUDP attempt helper' >&2; exit 1; }
+grep -q '^probe_udp(){' dual-probe-final.sh || { echo 'final probe missing UDP/XUDP retry wrapper' >&2; exit 1; }
+grep -q 'UDP/XUDP transient failure; retry' dual-probe-final.sh || { echo 'final probe missing transient UDP retry handling' >&2; exit 1; }
+echo 'final split architecture + resilient validation + auto-heal + x-ui attach + UDP retry assertions = OK'
 
 echo
 echo "--- required final files ---"
