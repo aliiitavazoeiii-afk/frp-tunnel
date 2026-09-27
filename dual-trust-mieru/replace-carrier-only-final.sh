@@ -48,7 +48,7 @@ cp -a "$LIVE_CFG" "$BK/$(basename "$LIVE_CFG")"
 cp -a "$LIVE_BUNDLE" "$BK/$(basename "$LIVE_BUNDLE")"
 
 rollback(){
-  rc=$?
+  local rc=${1:-1}
   trap - ERR INT TERM
   log "ROLLBACK: restoring previous $ROLE carrier"
   cp -a "$BK/$(basename "$LIVE_CFG")" "$LIVE_CFG"
@@ -58,7 +58,27 @@ rollback(){
   log "Previous $ROLE carrier restored; shared bridge/dispatcher/x-ui were never restarted"
   exit "$rc"
 }
-trap rollback ERR INT TERM
+trap 'rollback $?' ERR
+trap 'rollback 130' INT
+trap 'rollback 143' TERM
+
+probe_stable(){
+  local port=$1 label=$2 attempts=$3 needed=$4
+  local code attempt streak=0
+  for attempt in $(seq 1 "$attempts"); do
+    code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
+    if [[ "$code" == 204 ]]; then
+      streak=$((streak+1))
+      log "$label probe $attempt/$attempts = OK (streak $streak/$needed)"
+      (( streak >= needed )) && return 0
+    else
+      log "$label probe $attempt/$attempts transient failure HTTP=${code:-000}"
+      streak=0
+    fi
+    sleep 1
+  done
+  return 1
+}
 
 if [[ "$ROLE" == trust ]]; then
   TRUST_IP=$(jq -r '.public_ip' "$BUNDLE")
@@ -133,21 +153,21 @@ chmod 0600 "$LIVE_CFG" "$LIVE_BUNDLE"
 
 log "Restarting ONLY $CARRIER; shared XUDP bridge/dispatcher/x-ui stay untouched"
 systemctl restart "$CARRIER"
-sleep 3
-systemctl is-active --quiet "$CARRIER"
-ss -H -ltn "sport = :$DIRECT_PORT" 2>/dev/null | grep -q .
+sleep 5
+systemctl is-active --quiet "$CARRIER" || rollback 1
+ss -H -ltn "sport = :$DIRECT_PORT" 2>/dev/null | grep -q . || rollback 1
 
-log "Direct $ROLE carrier probe"
-for attempt in $(seq 1 10); do
-  code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$DIRECT_PORT" --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
-  [[ "$code" == 204 ]] || die "$ROLE direct probe $attempt/10 failed HTTP=${code:-000}"
-done
+log "Direct $ROLE carrier warm-up/stability probe"
+if ! probe_stable "$DIRECT_PORT" "$role-direct" 10 3; then
+  echo "ERROR: $ROLE direct carrier failed to become stable after 10 attempts" >&2
+  rollback 1
+fi
 
-log "Existing split/XUDP path probe without bridge restart"
-for attempt in $(seq 1 5); do
-  code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$PATH_PORT" --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 || true)
-  [[ "$code" == 204 ]] || die "$ROLE split probe $attempt/5 failed HTTP=${code:-000}"
-done
+log "Existing split/XUDP path stability probe without bridge restart"
+if ! probe_stable "$PATH_PORT" "$role-split" 8 2; then
+  echo "ERROR: $ROLE split/XUDP path failed to become stable after 8 attempts" >&2
+  rollback 1
+fi
 
 trap - ERR INT TERM
 log "SUCCESS: $ROLE carrier replaced with matching live XUDP UUID"
