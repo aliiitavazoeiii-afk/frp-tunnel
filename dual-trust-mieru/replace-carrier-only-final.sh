@@ -158,13 +158,13 @@ systemctl is-active --quiet "$CARRIER" || rollback 1
 ss -H -ltn "sport = :$DIRECT_PORT" 2>/dev/null | grep -q . || rollback 1
 
 log "Direct $ROLE carrier warm-up/stability probe"
-if ! probe_stable "$DIRECT_PORT" "$role-direct" 10 3; then
+if ! probe_stable "$DIRECT_PORT" "${ROLE}-direct" 10 3; then
   echo "ERROR: $ROLE direct carrier failed to become stable after 10 attempts" >&2
   rollback 1
 fi
 
 log "Existing split/XUDP path stability probe without bridge restart"
-if ! probe_stable "$PATH_PORT" "$role-split" 8 2; then
+if ! probe_stable "$PATH_PORT" "${ROLE}-split" 8 2; then
   echo "ERROR: $ROLE split/XUDP path failed to become stable after 8 attempts" >&2
   rollback 1
 fi
