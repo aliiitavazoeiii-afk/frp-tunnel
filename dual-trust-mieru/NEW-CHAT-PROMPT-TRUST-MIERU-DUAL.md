@@ -12,30 +12,45 @@ Repository:
 aliiitavazoeiii-afk/frp-tunnel
 ```
 
-Branch to use:
+Branch:
 
 ```text
 trust-mieru-dual
 ```
 
-**Before giving me any commands or making any change, inspect this branch and fully read:**
+Before giving commands or changing anything, inspect the current branch HEAD and fully read these files in this order:
 
 ```text
+dual-trust-mieru/V1.1.0-RELEASE-CONTEXT.md
+dual-trust-mieru/SIMPLE-INSTALL.md
 dual-trust-mieru/TRUST-MIERU-DUAL-PROJECT-CONTEXT.md
 ```
 
-Also inspect the actual scripts on this branch, especially:
+`V1.1.0-RELEASE-CONTEXT.md` supersedes conflicting operational details in the older project context. The older file is still important for incident history.
+
+Also inspect the actual current scripts, especially:
 
 ```text
+dual-trust-mieru/dual-install-foreign.sh
+dual-trust-mieru/dual-install-iran.sh
+dual-trust-mieru/dual-manager.sh
+dual-trust-mieru/dual-health.sh
 dual-trust-mieru/replace-carrier-only-final.sh
 dual-trust-mieru/dual-autoheal.sh
+dual-trust-mieru/install-autoheal.sh
 dual-trust-mieru/dual-probe-final.sh
-dual-trust-mieru/install-foreign-trust.sh
-dual-trust-mieru/install-foreign-mieru-final.sh
-dual-trust-mieru/install-iran-final.sh
 ```
 
-Treat the **real current VPS/runtime output** that I send you as more authoritative than old documentation.
+Treat real current VPS/runtime output that I send as more authoritative than documentation.
+
+Current normal operator interface is:
+
+```text
+dual-install-foreign.sh   # foreign Trust or Mieru installation
+dual-install-iran.sh      # Iran fresh install or in-place v1.1 upgrade
+dual status               # interactive management menu
+dual health --full        # full non-interactive health
+```
 
 Important production constraints:
 
@@ -45,29 +60,10 @@ Important production constraints:
 - Keep Trust and Mieru as two independent paths.
 - Do not permanently switch to only one carrier.
 - Do not change both carriers simultaneously.
-- During a carrier migration, preserve the currently live role XUDP UUID.
-- `replace-carrier-only-final.sh` is the preferred carrier-only cutover helper.
-- Stop autoheal during manual cutover and re-enable it afterward.
-- Do not restart the shared `dual-xudp-bridge` unless direct carriers are confirmed healthy and the fault is proven to be bridge/path-only.
-- Keep old foreign VPSes for rollback until the new path passes full validation.
-- Never print/paste bundle credentials, UUID values, REALITY keys or other secrets. Compare UUIDs using MATCH/DIFFERENT only.
-- Label command blocks clearly as IRAN, FOREIGN TRUST, or FOREIGN MIERU.
-- Prefer short copy-paste command blocks because large terminal pastes can get mangled.
-
-Current Iran node in the latest work is referred to as Maya3:
-
-```text
-Iran: 5.10.249.206
-```
-
-Latest selected foreign endpoints at handoff:
-
-```text
-Trust:  193.57.9.218
-Mieru:  193.57.9.156
-```
-
-But do **not** assume those are fully validated just because they are listed. Read the project-context file: Trust had previous XUDP/internal-host issues on replacement servers, and the final Mieru migration to `193.57.9.156` had not yet been confirmed with a pasted full probe at the time of handoff.
+- Preserve the currently live role XUDP UUID during a carrier migration.
+- Do not restart the shared `dual-xudp-bridge` for a one-role problem.
+- Never print/paste bundle credentials, UUID values, REALITY keys, TLS private keys or other secrets.
+- Prefer short copy-paste command blocks.
 
 Architecture/ports to preserve:
 
@@ -89,32 +85,37 @@ mieru-in TCP  -> carrier-mieru
 mieru-in UDP  -> xudp-mieru
 ```
 
-Mieru final carrier settings:
+Mieru production settings must remain unless deliberately benchmarked:
 
 ```text
 MULTIPLEXING_OFF
 HANDSHAKE_STANDARD
 ```
 
+Do not casually turn Mieru multiplexing back on: the operator reports the current combination no longer has the earlier video-freeze problem.
+
+v1.1 deliberately retired the old aggressive health cadence. The normal profile is now dispatcher health `interval: 120`, `lazy: true`, plus autoheal every 5 minutes with randomized delay. Autoheal must use actual UDP/XUDP probes for XUDP diagnosis; TCP HTTP through 7991/7992 is not XUDP proof.
+
 When diagnosing, separate:
 
 1. direct carrier health (`7993` Trust / `7994` Mieru)
-2. forced split-path health (`7991` / `7992`)
-3. dispatcher (`7990`)
-4. role XUDP/UDP health
-5. foreign endpoint health
+2. forced TCP path (`7991` / `7992`)
+3. role Telegram behavior
+4. real role UDP/XUDP health
+5. dispatcher (`7990`)
+6. foreign endpoint/backend health
 
-Do not infer an IP is filtered solely from one HTTP=000/reset/timeout. First isolate the failing layer.
+For ordinary foreign replacement, prefer the `dual status` menu. It is designed to replace one role without restarting the other carrier, x-ui or the shared bridge, and to require TCP + Telegram + UDP/XUDP validation before declaring the cutover successful.
 
-If Trust direct HTTP works but Trust UDP/XUDP fails, specifically inspect `xudp-trust.internal:2443` reachability through Trust SOCKS and read the incident notes in the context file before touching the Iran shared bridge.
+For Trust replacement, the Trust domain A record must first resolve to the new Trust VPS. The manager checks this before installation/cutover.
 
-If Mieru direct is itself intermittently failing, investigate Mieru server/path quality before blaming XUDP or the shared bridge.
+Do not assume endpoint IPs from old handoff files are still current. Read the current bundles/runtime instead.
 
-At the start of this new chat, first tell me in a short summary:
+At the start of the new chat, briefly state:
 
-- that you read the branch/context,
-- what you believe the current architecture/state is,
-- what is confirmed versus still needs runtime verification,
-- and then continue from the exact server output I give you.
+- current branch HEAD/version,
+- that you read the v1.1 release context and historical context,
+- what architecture/invariants you will preserve,
+- and what runtime facts still need verification.
 
-Do not redesign the system from scratch and do not ask me to repeat information already documented in the branch unless runtime verification is actually necessary.
+Do not redesign from scratch and do not make me repeat documented information unless runtime verification is genuinely necessary.
