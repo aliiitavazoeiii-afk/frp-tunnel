@@ -13,14 +13,14 @@ trap err ERR
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --role) ROLE=${2:-}; shift 2 ;;
-    --public-ip) PUBLIC_IP=${2:-}; shift 2 ;;
-    --domain) DOMAIN=${2:-}; shift 2 ;;
-    --email) EMAIL=${2:-}; shift 2 ;;
-    --port-range) PORT_RANGE=${2:-}; shift 2 ;;
-    --xudp-uuid-file) UUID_FILE=${2:-}; shift 2 ;;
-    --non-interactive) NONINTERACTIVE=1; shift ;;
-    *) die "unknown option: $1" ;;
+    --role) ROLE=${2:-}; shift 2;;
+    --public-ip) PUBLIC_IP=${2:-}; shift 2;;
+    --domain) DOMAIN=${2:-}; shift 2;;
+    --email) EMAIL=${2:-}; shift 2;;
+    --port-range) PORT_RANGE=${2:-}; shift 2;;
+    --xudp-uuid-file) UUID_FILE=${2:-}; shift 2;;
+    --non-interactive) NONINTERACTIVE=1; shift;;
+    *) die "unknown option: $1";;
   esac
 done
 
@@ -32,6 +32,13 @@ banner(){
 }
 banner
 
+valid_ipv4(){
+  local IFS=. a b c d extra o
+  read -r a b c d extra <<<"$1"
+  [[ -z ${extra:-} && -n ${a:-} && -n ${b:-} && -n ${c:-} && -n ${d:-} ]] || return 1
+  for o in "$a" "$b" "$c" "$d"; do [[ "$o" =~ ^[0-9]{1,3}$ ]] && ((10#$o <= 255)) || return 1; done
+}
+
 if [[ -z "$ROLE" && $NONINTERACTIVE -eq 0 ]]; then
   echo '1) Trust foreign'
   echo '2) Mieru foreign'
@@ -40,14 +47,7 @@ if [[ -z "$ROLE" && $NONINTERACTIVE -eq 0 ]]; then
 fi
 [[ "$ROLE" == trust || "$ROLE" == mieru ]] || die 'role must be trust or mieru'
 
-valid_ipv4(){
-  local IFS=. a b c d extra o
-  read -r a b c d extra <<<"$1"
-  [[ -z "${extra:-}" && -n "${a:-}" && -n "${b:-}" && -n "${c:-}" && -n "${d:-}" ]] || return 1
-  for o in "$a" "$b" "$c" "$d"; do [[ "$o" =~ ^[0-9]{1,3}$ ]] && (( 10#$o <= 255 )) || return 1; done
-}
-
-[[ -n "$PUBLIC_IP" || $NONINTERACTIVE -eq 1 ]] || read -r -p 'Public IPv4: ' PUBLIC_IP
+if [[ -z "$PUBLIC_IP" && $NONINTERACTIVE -eq 0 ]]; then read -r -p 'Public IPv4: ' PUBLIC_IP; fi
 valid_ipv4 "$PUBLIC_IP" || die 'valid IPv4 required'
 
 if [[ "$ROLE" == trust ]]; then
@@ -58,7 +58,7 @@ if [[ "$ROLE" == trust ]]; then
 else
   if [[ $NONINTERACTIVE -eq 0 ]]; then
     read -r -p "Mieru port range [$PORT_RANGE]: " x || true
-    [[ -z "${x:-}" ]] || PORT_RANGE=$x
+    [[ -z ${x:-} ]] || PORT_RANGE=$x
   fi
   [[ "$PORT_RANGE" =~ ^([0-9]{4,5})-([0-9]{4,5})$ ]] || die 'invalid Mieru port range'
 fi
@@ -86,7 +86,7 @@ if [[ "$ROLE" == trust ]]; then
     bash "$B/install-foreign-trust.sh" --public-ip "$PUBLIC_IP" --domain "$DOMAIN" --email "$EMAIL"
   fi
   tmp=$(mktemp)
-  jq --arg email "$EMAIL" '.cert_email=$email' "$BUNDLE" > "$tmp" || die 'failed to add cert email to Trust bundle'
+  jq --arg email "$EMAIL" '.cert_email=$email' "$BUNDLE" > "$tmp"
   install -m 0600 "$tmp" "$BUNDLE"; rm -f "$tmp"
 else
   D="$CONFIG_DIR/mieru"; BUNDLE=/root/dual-mieru-client.json; XSVC=dual-xudp-mieru.service
@@ -108,7 +108,7 @@ sanitize_log(){
 import re,sys
 s=open(sys.argv[1],errors='replace').read()
 s=re.sub(r'(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b','<UUID>',s)
-print(s[-5000:], end='')
+print(s[-5000:],end='')
 PY
 }
 
@@ -123,22 +123,19 @@ if [[ -n "$LIVE_UUID" ]]; then
     cp -a "$D/xray.json" "$D/xray.json.before-live-uuid"
     cp -a "$BUNDLE" "${BUNDLE}.before-live-uuid"
 
-    XTMP=$(mktemp)
+    # Xray 26.9.x determines config format from the filename. Keep .json suffix.
+    XTMP=$(mktemp --suffix=.json)
     stage xray-patch
     python3 - "$D/xray.json" "$XTMP" "$LIVE_UUID" <<'PY'
 import json,sys
 src,dst,new=sys.argv[1:4]
-with open(src) as f:
-    obj=json.load(f)
-matches=[x for x in obj.get("inbounds",[]) if x.get("tag")=="xudp-in"]
-if len(matches)!=1:
-    raise SystemExit(f"expected exactly one xudp-in inbound, found {len(matches)}")
-users=matches[0].get("settings",{}).get("users",[])
-if not users or "id" not in users[0]:
-    raise SystemExit("xudp-in first user id missing")
-users[0]["id"]=new
-with open(dst,"w") as f:
-    json.dump(obj,f,indent=2,sort_keys=False)
+with open(src) as f: obj=json.load(f)
+m=[x for x in obj.get('inbounds',[]) if x.get('tag')=='xudp-in']
+if len(m)!=1: raise SystemExit(f'expected exactly one xudp-in inbound, found {len(m)}')
+users=m[0].get('settings',{}).get('users',[])
+if not users or 'id' not in users[0]: raise SystemExit('xudp-in first user id missing')
+users[0]['id']=new
+with open(dst,'w') as f: json.dump(obj,f,indent=2)
 PY
     [[ -s "$XTMP" ]] || die 'XRAY-PATCH produced empty candidate'
 
@@ -157,26 +154,16 @@ PY
     python3 - "$BUNDLE" "$BTMP" "$LIVE_UUID" <<'PY'
 import json,sys
 src,dst,new=sys.argv[1:4]
-with open(src) as f:
-    obj=json.load(f)
-obj["xudp_uuid"]=new
-with open(dst,"w") as f:
-    json.dump(obj,f,indent=2,sort_keys=True)
+with open(src) as f: obj=json.load(f)
+obj['xudp_uuid']=new
+with open(dst,'w') as f: json.dump(obj,f,indent=2,sort_keys=True)
 PY
-    [[ -s "$BTMP" ]] || die 'BUNDLE-PATCH produced empty candidate'
     install -m 0600 "$BTMP" "$BUNDLE"; rm -f "$BTMP"
 
     stage xudp-restart
-    if ! systemctl restart "$XSVC"; then
-      journalctl -u "$XSVC" -n 40 --no-pager >&2 || true
-      die 'XUDP-RESTART command failed'
-    fi
+    systemctl restart "$XSVC"
     sleep 2
-    if ! systemctl is-active --quiet "$XSVC"; then
-      journalctl -u "$XSVC" -n 40 --no-pager >&2 || true
-      die 'XUDP service inactive after UUID apply'
-    fi
-
+    systemctl is-active --quiet "$XSVC" || { journalctl -u "$XSVC" -n 40 --no-pager >&2 || true; die 'XUDP service inactive after UUID apply'; }
     BUNDLE_UUID=$(jq -r '.xudp_uuid // empty' "$BUNDLE")
     SERVER_UUID=$(jq -r '.inbounds[] | select(.tag=="xudp-in") | .settings.users[0].id // empty' "$D/xray.json")
     [[ "$BUNDLE_UUID" == "$LIVE_UUID" && "$SERVER_UUID" == "$LIVE_UUID" ]] || die 'UUID verification failed'
@@ -197,21 +184,18 @@ def r(s,n):
         if not x: raise RuntimeError('SOCKS closed')
         b+=x
     return b
-s=socket.create_connection(('127.0.0.1',p),timeout=5)
-s.sendall(b'\x05\x01\x00')
+s=socket.create_connection(('127.0.0.1',p),timeout=5); s.sendall(b'\x05\x01\x00')
 if r(s,2)!=b'\x05\x00': raise RuntimeError('SOCKS auth')
 try:
-    ip=ipaddress.ip_address(host)
-    req=b'\x05\x01\x00'+(b'\x01'+ip.packed if ip.version==4 else b'\x04'+ip.packed)
+    ip=ipaddress.ip_address(host); req=b'\x05\x01\x00'+(b'\x01'+ip.packed if ip.version==4 else b'\x04'+ip.packed)
 except ValueError:
     hb=host.encode(); req=b'\x05\x01\x00\x03'+bytes([len(hb)])+hb
-s.sendall(req+struct.pack('!H',dp))
-h=r(s,4)
+s.sendall(req+struct.pack('!H',dp)); h=r(s,4)
 if h[1]!=0: raise RuntimeError(f'SOCKS CONNECT reply={h[1]}')
 at=h[3]
-if at==1: r(s,4)
-elif at==3: r(s,r(s,1)[0])
-elif at==4: r(s,16)
+if at==1:r(s,4)
+elif at==3:r(s,r(s,1)[0])
+elif at==4:r(s,16)
 r(s,2)
 PY
 }
@@ -250,32 +234,13 @@ EOT
   "$BIN_DIR/trusttunnel_client" --config "$TCFG" >"$TLOG" 2>&1 & pid=$!
   ready=0
   for _ in $(seq 1 100); do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      tail -n 50 "$TLOG" >&2 || true
-      wait "$pid" 2>/dev/null || true
-      rm -f "$TCFG" "$TLOG"
-      die 'TRUST-PREFLIGHT client exited before ready'
-    fi
-    if ss -H -ltn 'sport = :17993' 2>/dev/null | grep -q . \
-       && grep -Eq 'VPN_SS_CONNECTED|Successfully connected to endpoint' "$TLOG" 2>/dev/null; then
-      ready=1; break
-    fi
+    kill -0 "$pid" 2>/dev/null || { tail -n 50 "$TLOG" >&2 || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" "$TLOG"; die 'TRUST-PREFLIGHT client exited before ready'; }
+    if ss -H -ltn 'sport = :17993' 2>/dev/null | grep -q . && grep -Eq 'VPN_SS_CONNECTED|Successfully connected to endpoint' "$TLOG"; then ready=1; break; fi
     sleep .2
   done
-  if (( ready == 0 )); then
-    tail -n 50 "$TLOG" >&2 || true
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    rm -f "$TCFG" "$TLOG"
-    die 'TRUST-PREFLIGHT did not reach CONNECTED state'
-  fi
-  if ! socks_connect_test 17993 xudp-trust.internal 2443; then
-    tail -n 50 "$TLOG" >&2 || true
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    rm -f "$TCFG" "$TLOG"
-    die 'TRUST-PREFLIGHT tunneled XUDP backend failed'
-  fi
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-  rm -f "$TCFG" "$TLOG"
+  ((ready==1)) || { tail -n 50 "$TLOG" >&2 || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" "$TLOG"; die 'TRUST-PREFLIGHT did not reach CONNECTED state'; }
+  socks_connect_test 17993 xudp-trust.internal 2443 || { tail -n 50 "$TLOG" >&2 || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" "$TLOG"; die 'TRUST-PREFLIGHT tunneled XUDP backend failed'; }
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" "$TLOG"
 else
   install_mihomo
   free_port 17994
@@ -309,28 +274,13 @@ EOT
   "$BIN_DIR/mihomo" -d "$MD" -f "$MCFG" >"$MLOG" 2>&1 & pid=$!
   ready=0
   for _ in $(seq 1 80); do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      tail -n 50 "$MLOG" >&2 || true
-      rm -rf "$MD" "$MCFG" "$MLOG"
-      die 'MIERU-PREFLIGHT client exited before ready'
-    fi
+    kill -0 "$pid" 2>/dev/null || { tail -n 50 "$MLOG" >&2 || true; rm -rf "$MD" "$MCFG" "$MLOG"; die 'MIERU-PREFLIGHT client exited before ready'; }
     if ss -H -ltn 'sport = :17994' 2>/dev/null | grep -q .; then ready=1; break; fi
     sleep .2
   done
-  if (( ready == 0 )); then
-    tail -n 50 "$MLOG" >&2 || true
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    rm -rf "$MD" "$MCFG" "$MLOG"
-    die 'MIERU-PREFLIGHT did not open SOCKS listener'
-  fi
-  if ! socks_connect_test 17994 127.0.0.1 2443; then
-    tail -n 50 "$MLOG" >&2 || true
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    rm -rf "$MD" "$MCFG" "$MLOG"
-    die 'MIERU-PREFLIGHT tunneled XUDP backend failed'
-  fi
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-  rm -rf "$MD" "$MCFG" "$MLOG"
+  ((ready==1)) || { tail -n 50 "$MLOG" >&2 || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -rf "$MD" "$MCFG" "$MLOG"; die 'MIERU-PREFLIGHT did not open SOCKS listener'; }
+  socks_connect_test 17994 127.0.0.1 2443 || { tail -n 50 "$MLOG" >&2 || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -rf "$MD" "$MCFG" "$MLOG"; die 'MIERU-PREFLIGHT tunneled XUDP backend failed'; }
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -rf "$MD" "$MCFG" "$MLOG"
 fi
 
 stage complete
