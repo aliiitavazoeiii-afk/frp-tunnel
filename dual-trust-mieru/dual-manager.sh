@@ -24,13 +24,18 @@ banner(){
   echo '██║  ██║██║   ██║██╔══██║██║     '
   echo '██████╔╝╚██████╔╝██║  ██║███████╗'
   echo '╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝'
-  printf '%b%s%b\n' "$M" '      MIERU TRUST TUNNEL' "$N"
-  printf '%b%s%b\n\n' "$Y" '      powered by ali tavazoei' "$N"
+  printf '%b%s%b\n' "$M" '      DUAL MIERU TRUST TUNNEL' "$N"
+  printf '%b%s%b\n\n' "$Y" '      power by ali tavazoei' "$N"
 }
 
 die(){ printf '%bERROR:%b %s\n' "$R" "$N" "$*" >&2; exit 1; }
 need_root(){ [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo -- "$0" "$@"; }
-valid_ip(){ [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
+valid_ip(){
+  local IFS=. a b c d extra o
+  read -r a b c d extra <<<"$1"
+  [[ -z "${extra:-}" && -n "${a:-}" && -n "${b:-}" && -n "${c:-}" && -n "${d:-}" ]] || return 1
+  for o in "$a" "$b" "$c" "$d"; do [[ "$o" =~ ^[0-9]{1,3}$ ]] && (( 10#$o <= 255 )) || return 1; done
+}
 role_bundle(){ [[ "$1" == trust ]] && echo "$D/trust-bundle.json" || echo "$D/mieru-bundle.json"; }
 role_node(){ [[ "$1" == trust ]] && echo 'XUDP-TRUST' || echo 'XUDP-MIERU'; }
 role_tag(){ [[ "$1" == trust ]] && echo 'xudp-trust' || echo 'xudp-mieru'; }
