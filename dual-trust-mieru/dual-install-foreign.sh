@@ -22,7 +22,7 @@ done
 banner(){
   echo '============================================================'
   echo '              DUAL MIERU TRUST TUNNEL'
-  echo '                 powered by ali tavazoei'
+  echo '                 power by ali tavazoei'
   echo '============================================================'
 }
 banner
@@ -59,13 +59,41 @@ if [[ -n "$UUID_FILE" ]]; then
   [[ "$LIVE_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || die 'UUID file is invalid'
 fi
 
+# Resume-safe base install. A wrapper/preflight failure after the underlying
+# foreign role was already installed must not force destructive reinstall.
 if [[ "$ROLE" == trust ]]; then
-  bash "$B/install-foreign-trust.sh" --public-ip "$PUBLIC_IP" --domain "$DOMAIN" --email "$EMAIL"
   D="$CONFIG_DIR/trust"; BUNDLE=/root/dual-trust-client.json; XSVC=dual-xudp-trust.service
+  if [[ -s "$D/xray.json" && -s "$D/vpn.toml" && -s "$BUNDLE" ]] \
+     && systemctl is-active --quiet dual-trust-endpoint.service \
+     && systemctl is-active --quiet dual-xudp-trust.service; then
+    [[ $(jq -r '.kind // empty' "$BUNDLE") == trust ]] || die 'existing Trust bundle has wrong role'
+    [[ $(jq -r '.public_ip // empty' "$BUNDLE") == "$PUBLIC_IP" ]] || die 'existing Trust install belongs to a different public IP'
+    [[ $(jq -r '.domain // empty' "$BUNDLE") == "$DOMAIN" ]] || die 'existing Trust install belongs to a different domain'
+    log 'Existing healthy Trust foreign detected; resuming wrapper validation without reinstalling the endpoint'
+  else
+    # Refuse ambiguous partial state; the base installer itself also protects
+    # against overwriting an existing role.
+    if [[ -e "$D" || -e "$BUNDLE" ]]; then
+      die 'partial/inactive Trust state exists; inspect it before reinstalling'
+    fi
+    bash "$B/install-foreign-trust.sh" --public-ip "$PUBLIC_IP" --domain "$DOMAIN" --email "$EMAIL"
+  fi
   tmp=$(mktemp); jq --arg email "$EMAIL" '.cert_email=$email' "$BUNDLE" > "$tmp"; install -m 0600 "$tmp" "$BUNDLE"; rm -f "$tmp"
 else
-  bash "$B/install-foreign-mieru-final.sh" --public-ip "$PUBLIC_IP" --port-range "$PORT_RANGE"
   D="$CONFIG_DIR/mieru"; BUNDLE=/root/dual-mieru-client.json; XSVC=dual-xudp-mieru.service
+  if [[ -s "$D/xray.json" && -s "$D/mita-server.json" && -s "$BUNDLE" ]] \
+     && systemctl is-active --quiet dual-xudp-mieru.service \
+     && mita status 2>/dev/null | grep -q 'RUNNING'; then
+    [[ $(jq -r '.kind // empty' "$BUNDLE") == mieru ]] || die 'existing Mieru bundle has wrong role'
+    [[ $(jq -r '.public_ip // empty' "$BUNDLE") == "$PUBLIC_IP" ]] || die 'existing Mieru install belongs to a different public IP'
+    [[ $(jq -r '.port_range // empty' "$BUNDLE") == "$PORT_RANGE" ]] || die 'existing Mieru install uses a different port range'
+    log 'Existing healthy Mieru foreign detected; resuming wrapper validation without reinstalling the endpoint'
+  else
+    if [[ -e "$D" || -e "$BUNDLE" ]]; then
+      die 'partial/inactive Mieru state exists; inspect it before reinstalling'
+    fi
+    bash "$B/install-foreign-mieru-final.sh" --public-ip "$PUBLIC_IP" --port-range "$PORT_RANGE"
+  fi
 fi
 
 # For carrier replacement, install the live Iran XUDP UUID directly on the new
@@ -126,8 +154,9 @@ if [[ "$ROLE" == trust ]]; then
   free_port 17993
   U=$(jq -r '.username' "$BUNDLE"); P=$(jq -r '.password' "$BUNDLE")
   TCFG=$(mktemp)
+  TLOG=$(mktemp)
   cat > "$TCFG" <<EOT
-loglevel = "warning"
+loglevel = "info"
 vpn_mode = "general"
 killswitch_enabled = false
 post_quantum_group_enabled = true
@@ -150,16 +179,41 @@ anti_dpi = false
 [listener.socks]
 address = "127.0.0.1:17993"
 EOT
-  chmod 0600 "$TCFG"
-  "$BIN_DIR/trusttunnel_client" --config "$TCFG" >/tmp/dual-trust-local-preflight.log 2>&1 & pid=$!
-  for _ in $(seq 1 60); do ss -H -ltn 'sport = :17993' 2>/dev/null | grep -q . && break; kill -0 "$pid" 2>/dev/null || break; sleep .2; done
-  if ! socks_connect_test 17993 xudp-trust.internal 2443; then tail -n 30 /tmp/dual-trust-local-preflight.log >&2 || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" /tmp/dual-trust-local-preflight.log; die 'Trust tunneled XUDP backend preflight failed'; fi
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$TCFG" /tmp/dual-trust-local-preflight.log
+  chmod 0600 "$TCFG" "$TLOG"
+  "$BIN_DIR/trusttunnel_client" --config "$TCFG" >"$TLOG" 2>&1 & pid=$!
+  ready=0
+  for _ in $(seq 1 100); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      tail -n 40 "$TLOG" >&2 || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$TCFG" "$TLOG"
+      die 'Trust local preflight client exited before becoming ready'
+    fi
+    if ss -H -ltn 'sport = :17993' 2>/dev/null | grep -q . \
+       && grep -Eq 'VPN_SS_CONNECTED|Successfully connected to endpoint' "$TLOG" 2>/dev/null; then
+      ready=1; break
+    fi
+    sleep .2
+  done
+  if (( ready == 0 )); then
+    tail -n 40 "$TLOG" >&2 || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    rm -f "$TCFG" "$TLOG"
+    die 'Trust local preflight did not reach CONNECTED state'
+  fi
+  if ! socks_connect_test 17993 xudp-trust.internal 2443; then
+    tail -n 40 "$TLOG" >&2 || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    rm -f "$TCFG" "$TLOG"
+    die 'Trust tunneled XUDP backend preflight failed'
+  fi
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  rm -f "$TCFG" "$TLOG"
 else
   install_mihomo
   free_port 17994
   U=$(jq -r '.username' "$BUNDLE"); P=$(jq -r '.password' "$BUNDLE"); PR=$(jq -r '.port_range' "$BUNDLE")
-  MCFG=$(mktemp)
+  MCFG=$(mktemp); MLOG=$(mktemp)
   cat > "$MCFG" <<EOT
 mode: rule
 log-level: warning
@@ -186,10 +240,31 @@ rules:
   - MATCH,MIERU
 EOT
   MD=$(mktemp -d)
-  "$BIN_DIR/mihomo" -d "$MD" -f "$MCFG" >/tmp/dual-mieru-local-preflight.log 2>&1 & pid=$!
-  for _ in $(seq 1 60); do ss -H -ltn 'sport = :17994' 2>/dev/null | grep -q . && break; kill -0 "$pid" 2>/dev/null || break; sleep .2; done
-  socks_connect_test 17994 127.0.0.1 2443 || { tail -n 30 /tmp/dual-mieru-local-preflight.log >&2 || true; kill "$pid" 2>/dev/null || true; rm -rf "$MD" "$MCFG"; die 'Mieru tunneled XUDP backend preflight failed'; }
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -rf "$MD" "$MCFG" /tmp/dual-mieru-local-preflight.log
+  "$BIN_DIR/mihomo" -d "$MD" -f "$MCFG" >"$MLOG" 2>&1 & pid=$!
+  ready=0
+  for _ in $(seq 1 80); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      tail -n 40 "$MLOG" >&2 || true
+      rm -rf "$MD" "$MCFG" "$MLOG"
+      die 'Mieru local preflight client exited before becoming ready'
+    fi
+    if ss -H -ltn 'sport = :17994' 2>/dev/null | grep -q .; then ready=1; break; fi
+    sleep .2
+  done
+  if (( ready == 0 )); then
+    tail -n 40 "$MLOG" >&2 || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    rm -rf "$MD" "$MCFG" "$MLOG"
+    die 'Mieru local preflight did not open SOCKS listener'
+  fi
+  if ! socks_connect_test 17994 127.0.0.1 2443; then
+    tail -n 40 "$MLOG" >&2 || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    rm -rf "$MD" "$MCFG" "$MLOG"
+    die 'Mieru tunneled XUDP backend preflight failed'
+  fi
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  rm -rf "$MD" "$MCFG" "$MLOG"
 fi
 
 log "SUCCESS: $ROLE foreign passed carrier + loopback XUDP backend preflight"
