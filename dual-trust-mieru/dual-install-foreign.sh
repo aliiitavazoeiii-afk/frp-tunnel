@@ -103,6 +103,15 @@ else
   fi
 fi
 
+sanitize_log(){
+  python3 - "$1" <<'PY'
+import re,sys
+s=open(sys.argv[1],errors='replace').read()
+s=re.sub(r'(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b','<UUID>',s)
+print(s[-5000:], end='')
+PY
+}
+
 if [[ -n "$LIVE_UUID" ]]; then
   stage uuid-sync
   BUNDLE_UUID=$(jq -r '.xudp_uuid // empty' "$BUNDLE")
@@ -115,16 +124,46 @@ if [[ -n "$LIVE_UUID" ]]; then
     cp -a "$BUNDLE" "${BUNDLE}.before-live-uuid"
 
     XTMP=$(mktemp)
-    jq --arg uuid "$LIVE_UUID" '(.inbounds[] | select(.tag=="xudp-in").settings.users[0].id)=$uuid' "$D/xray.json" > "$XTMP" \
-      || die 'XRAY-JSON patch failed'
+    stage xray-patch
+    python3 - "$D/xray.json" "$XTMP" "$LIVE_UUID" <<'PY'
+import json,sys
+src,dst,new=sys.argv[1:4]
+with open(src) as f:
+    obj=json.load(f)
+matches=[x for x in obj.get("inbounds",[]) if x.get("tag")=="xudp-in"]
+if len(matches)!=1:
+    raise SystemExit(f"expected exactly one xudp-in inbound, found {len(matches)}")
+users=matches[0].get("settings",{}).get("users",[])
+if not users or "id" not in users[0]:
+    raise SystemExit("xudp-in first user id missing")
+users[0]["id"]=new
+with open(dst,"w") as f:
+    json.dump(obj,f,indent=2,sort_keys=False)
+PY
+    [[ -s "$XTMP" ]] || die 'XRAY-PATCH produced empty candidate'
+
     stage xray-validate
-    "$BIN_DIR/xray" run -test -c "$XTMP" >/dev/null \
-      || die 'XRAY-VALIDATE failed after UUID patch'
+    XLOG=$(mktemp)
+    if ! "$BIN_DIR/xray" run -test -c "$XTMP" >"$XLOG" 2>&1; then
+      echo 'Xray rejected the UUID-patched candidate. Sanitized validator output:' >&2
+      sanitize_log "$XLOG" >&2 || true
+      rm -f "$XTMP" "$XLOG"
+      die 'XRAY-VALIDATE failed after UUID patch'
+    fi
+    rm -f "$XLOG"
     install -m 0600 "$XTMP" "$D/xray.json"; rm -f "$XTMP"
 
     BTMP=$(mktemp)
-    jq --arg uuid "$LIVE_UUID" '.xudp_uuid=$uuid' "$BUNDLE" > "$BTMP" \
-      || die 'BUNDLE-JSON patch failed'
+    python3 - "$BUNDLE" "$BTMP" "$LIVE_UUID" <<'PY'
+import json,sys
+src,dst,new=sys.argv[1:4]
+with open(src) as f:
+    obj=json.load(f)
+obj["xudp_uuid"]=new
+with open(dst,"w") as f:
+    json.dump(obj,f,indent=2,sort_keys=True)
+PY
+    [[ -s "$BTMP" ]] || die 'BUNDLE-PATCH produced empty candidate'
     install -m 0600 "$BTMP" "$BUNDLE"; rm -f "$BTMP"
 
     stage xudp-restart
