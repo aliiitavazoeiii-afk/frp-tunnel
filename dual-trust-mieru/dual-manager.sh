@@ -6,6 +6,7 @@ REPO_URL='https://github.com/aliiitavazoeiii-afk/frp-tunnel.git'
 BRANCH='trust-mieru-dual'
 HEALTH=/usr/local/sbin/dual-health
 REPLACE=/usr/local/sbin/dual-replace-carrier
+OPTIMIZER=/usr/local/sbin/dual-optimizer
 AUTOHEAL_INSTALL=/usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
 STATE=/var/lib/dual-trust-mieru/manager
 SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new)
@@ -17,15 +18,16 @@ else G=''; R=''; Y=''; C=''; M=''; B=''; N=''; fi
 
 banner(){
   clear 2>/dev/null || true
-  printf '%b\n' "$C$B"
+  printf '%b' "$R$B"
   echo '██████╗ ██╗   ██╗ █████╗ ██╗     '
   echo '██╔══██╗██║   ██║██╔══██╗██║     '
   echo '██║  ██║██║   ██║███████║██║     '
   echo '██║  ██║██║   ██║██╔══██║██║     '
   echo '██████╔╝╚██████╔╝██║  ██║███████╗'
   echo '╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝'
-  printf '%b%s%b\n' "$M" '      DUAL MIERU TRUST TUNNEL' "$N"
-  printf '%b%s%b\n\n' "$Y" '      power by ali tavazoei' "$N"
+  echo '      DUAL MIERU TRUST TUNNEL'
+  echo '      power by ali tavazoei'
+  printf '%b\n' "$N"
 }
 
 die(){ printf '%bERROR:%b %s\n' "$R" "$N" "$*" >&2; exit 1; }
@@ -41,14 +43,21 @@ role_node(){ [[ "$1" == trust ]] && echo 'XUDP-TRUST' || echo 'XUDP-MIERU'; }
 role_tag(){ [[ "$1" == trust ]] && echo 'xudp-trust' || echo 'xudp-mieru'; }
 
 endpoint_summary(){
-  local t='unknown' m='unknown'
+  local t='unknown' m='unknown' a='unknown' d='unknown' x='unknown'
   [[ -s "$D/trust-bundle.json" ]] && t=$(jq -r '.public_ip // "unknown"' "$D/trust-bundle.json")
   [[ -s "$D/mieru-bundle.json" ]] && m=$(jq -r '.public_ip // "unknown"' "$D/mieru-bundle.json")
-  printf 'Trust: %-16s  Mieru: %-16s\n' "$t" "$m"
-  printf 'Autoheal: %-9s  Dispatcher: %-9s  x-ui: %-9s\n' \
-    "$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true)" \
-    "$(systemctl is-active dual-dispatcher 2>/dev/null || true)" \
-    "$(systemctl is-active x-ui 2>/dev/null || true)"
+  a=$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true); [[ -n "$a" ]] || a=unknown
+  d=$(systemctl is-active dual-dispatcher 2>/dev/null || true); [[ -n "$d" ]] || d=unknown
+  x=$(systemctl is-active x-ui 2>/dev/null || true); [[ -n "$x" ]] || x=unknown
+  printf '%b' "$R$B"
+  printf '%-16s | %-24s\n' 'ROLE / SERVICE' 'STATUS / VALUE'
+  printf '%-16s-+-%-24s\n' '----------------' '------------------------'
+  printf '%-16s | %-24s\n' 'Trust IP' "$t"
+  printf '%-16s | %-24s\n' 'Mieru IP' "$m"
+  printf '%-16s | %-24s\n' 'Autoheal' "$a"
+  printf '%-16s | %-24s\n' 'Dispatcher' "$d"
+  printf '%-16s | %-24s\n' 'x-ui' "$x"
+  printf '%b' "$N"
 }
 
 apply_safe_profile(){
@@ -143,7 +152,7 @@ cleanup_old_foreign(){
 }
 
 replace_role(){
-  local role=$1 bundle old new tag live_uuid uuid_file new_bundle auto_was=0
+  local role=$1 bundle old new tag live_uuid uuid_file new_bundle auto_was=0 domain remote_path rc
   bundle=$(role_bundle "$role"); [[ -s "$bundle" ]] || die "$role bundle missing"
   old=$(jq -r '.public_ip // empty' "$bundle")
   tag=$(role_tag "$role")
@@ -198,6 +207,7 @@ replace_role(){
 }
 
 restart_role(){
+  local s
   case "$1" in trust) s=dual-trust-client.service;; mieru) s=dual-mieru-carrier.service;; esac
   systemctl restart "$s"; sleep 3; "$HEALTH" --quick "$1" || true
 }
@@ -207,12 +217,18 @@ show_logs(){
     --since '-30 min' --no-pager | grep -Ei 'error|warn|timeout|closed pipe|reset|failed' | tail -n 120 || true
 }
 
+run_optimizer(){
+  [[ -x "$OPTIMIZER" ]] || die 'dual optimizer is not installed; run dual-install-iran.sh upgrade first'
+  "$OPTIMIZER"
+}
+
 need_root "$@"
 [[ -s "$D/xudp.json" ]] || die 'Iran dual tunnel is not installed'
 
 case "${1:-}" in
   --apply-safe-profile) apply_safe_profile; exit 0 ;;
   --health) "$HEALTH" "${2:---quick}" "${3:-all}"; exit $? ;;
+  --optimize) run_optimizer; exit $? ;;
 esac
 
 while true; do
@@ -226,6 +242,7 @@ while true; do
   echo '  6) Restart Mieru carrier only'
   echo '  7) Recent tunnel warnings/errors'
   echo '  8) Re-apply low-noise health profile'
+  echo '  9) Safe server optimizer / cleanup'
   echo '  0) Exit'
   echo
   read -r -p 'Select: ' c
@@ -239,6 +256,7 @@ while true; do
     6) restart_role mieru ;;
     7) show_logs ;;
     8) apply_safe_profile ;;
+    9) run_optimizer ;;
     0) exit 0 ;;
     *) echo 'Invalid selection.' ;;
   esac
