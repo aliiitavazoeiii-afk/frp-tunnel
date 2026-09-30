@@ -17,7 +17,7 @@ done
 banner(){
   echo '============================================================'
   echo '              DUAL MIERU TRUST TUNNEL'
-  echo '                 powered by ali tavazoei'
+  echo '                 power by ali tavazoei'
   echo '============================================================'
 }
 banner
@@ -30,6 +30,8 @@ install_manager(){
   install -m 0755 "$B/dual-health.sh" /usr/local/sbin/dual-health
   install -m 0755 "$B/dual-manager.sh" /usr/local/sbin/dual-manager
   install -m 0755 "$B/dual-cli.sh" /usr/local/bin/dual
+  install -m 0755 "$B/dual-optimizer.sh" /usr/local/sbin/dual-optimizer
+  install -m 0755 "$B/host-optimizer.sh" /usr/local/sbin/dual-host-optimizer
   install -m 0755 "$B/replace-carrier-only-final.sh" /usr/local/sbin/dual-replace-carrier
   install -m 0755 "$B/dual-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/dual-autoheal.sh
   install -m 0755 "$B/install-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
@@ -88,3 +90,4 @@ echo
 echo 'INSTALL COMPLETE'
 echo 'Management menu: dual status'
 echo 'Health only:     dual health --full'
+echo 'Safe optimizer:  dual optimize'
