@@ -38,13 +38,18 @@ install_manager(){
 }
 
 # Existing production: upgrade management/health in place, do not reinstall
-# carriers or x-ui. Only the dispatcher is briefly restarted after its health
-# cadence is changed.
+# carriers or x-ui. If the low-noise dispatcher profile is already active,
+# the UI/optimizer upgrade does not restart the dispatcher either.
 if [[ -s /etc/dual-trust-mieru/iran/xudp.json ]]; then
   echo 'Existing dual installation detected: upgrading in place.'
   install_manager
   install -m 0755 "$B/dual-probe-final.sh" /usr/local/sbin/dual-tunnel-probe
-  /usr/local/sbin/dual-manager --apply-safe-profile
+  if grep -Eq '^[[:space:]]*interval:[[:space:]]*120[[:space:]]*$' /etc/dual-trust-mieru/iran/dispatcher.yaml 2>/dev/null \
+     && grep -Eq '^[[:space:]]*lazy:[[:space:]]*true[[:space:]]*$' /etc/dual-trust-mieru/iran/dispatcher.yaml 2>/dev/null; then
+    echo 'Low-noise dispatcher profile already active; no dispatcher restart needed.'
+  else
+    /usr/local/sbin/dual-manager --apply-safe-profile
+  fi
   echo
   /usr/local/sbin/dual-health --full all || true
   echo
