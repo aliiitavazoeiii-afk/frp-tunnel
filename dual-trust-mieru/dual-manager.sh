@@ -9,7 +9,7 @@ REPLACE=/usr/local/sbin/dual-replace-carrier
 OPTIMIZER=/usr/local/sbin/dual-optimizer
 AUTOHEAL_INSTALL=/usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
 STATE=/var/lib/dual-trust-mieru/manager
-SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new)
+SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPersist=600 -o ControlPath=/run/dual-ssh-%C)
 mkdir -p "$STATE" 2>/dev/null || true
 
 if [[ -t 1 ]]; then
@@ -88,6 +88,11 @@ refresh_node_health(){
   curl -sS --max-time 8 -H "Authorization: Bearer $secret" \
     "http://127.0.0.1:19090/proxies/$node/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=5000&expected=204" \
     >/dev/null 2>&1 || true
+}
+
+close_ssh_master(){
+  local ip=$1
+  ssh "${SSH_OPTS[@]}" -O exit "root@$ip" >/dev/null 2>&1 || true
 }
 
 remote_bootstrap(){
@@ -172,15 +177,20 @@ replace_role(){
     }
   fi
 
-  echo "Connecting to new VPS. SSH may ask for its root password once."
+  echo "Connecting to new VPS. SSH will ask for its root password once; the session is reused for the migration."
   ssh "${SSH_OPTS[@]}" "root@$new" 'echo NEW-FOREIGN-SSH=OK' || die 'cannot SSH to new foreign'
   uuid_file=$(mktemp /root/.dual-live-uuid.XXXXXX); chmod 0600 "$uuid_file"; printf '%s\n' "$live_uuid" > "$uuid_file"
-  remote_bootstrap "$role" "$new" "$uuid_file" "$bundle" || { rm -f "$uuid_file"; return 1; }
+  if ! remote_bootstrap "$role" "$new" "$uuid_file" "$bundle"; then
+    rm -f "$uuid_file"; close_ssh_master "$new"; return 1
+  fi
   rm -f "$uuid_file"
 
   new_bundle=$(mktemp "/root/new-${role}-bundle.XXXXXX.json")
   if [[ "$role" == trust ]]; then remote_path=/root/dual-trust-client.json; else remote_path=/root/dual-mieru-client.json; fi
-  scp "${SSH_OPTS[@]}" "root@$new:$remote_path" "$new_bundle"
+  if ! scp "${SSH_OPTS[@]}" "root@$new:$remote_path" "$new_bundle"; then
+    rm -f "$new_bundle"; close_ssh_master "$new"; return 1
+  fi
+  close_ssh_master "$new"
   chmod 0600 "$new_bundle"
   [[ $(jq -r '.kind' "$new_bundle") == "$role" ]] || die 'downloaded bundle has wrong role'
   [[ $(jq -r '.public_ip' "$new_bundle") == "$new" ]] || die 'downloaded bundle has wrong IP'
