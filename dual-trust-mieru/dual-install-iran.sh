@@ -37,19 +37,51 @@ install_manager(){
   install -m 0755 "$B/install-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
 }
 
-# Existing production: upgrade management/health in place, do not reinstall
-# carriers or x-ui. If the low-noise dispatcher profile is already active,
-# the UI/optimizer upgrade does not restart the dispatcher either.
+ensure_dispatcher_profile(){
+  local cfg=/etc/dual-trust-mieru/iran/dispatcher.yaml
+  [[ -s "$cfg" ]] || { echo 'ERROR: dispatcher config missing' >&2; return 1; }
+
+  if grep -Eq '^[[:space:]]*interval:[[:space:]]*120[[:space:]]*$' "$cfg" \
+     && grep -Eq '^[[:space:]]*lazy:[[:space:]]*true[[:space:]]*$' "$cfg" \
+     && grep -Eq '^[[:space:]]*max-failed-times:[[:space:]]*2[[:space:]]*$' "$cfg" \
+     && grep -Eq '^[[:space:]]*strategy:[[:space:]]*sticky-sessions[[:space:]]*$' "$cfg"; then
+    echo 'Sticky low-noise dispatcher profile already active; no dispatcher restart needed.'
+  else
+    cp -a "$cfg" "$cfg.before-sticky-profile-$(date -u +%Y%m%dT%H%M%SZ)"
+    python3 - "$cfg" <<'PY'
+import re,sys
+p=sys.argv[1]
+s=open(p).read()
+s=re.sub(r'(?m)^(\s*interval:)\s*\d+\s*$', r'\1 120', s, count=1)
+s=re.sub(r'(?m)^(\s*lazy:)\s*(?:true|false)\s*$', r'\1 true', s, count=1)
+s=re.sub(r'(?m)^(\s*max-failed-times:)\s*\d+\s*$', r'\1 2', s, count=1)
+if re.search(r'(?m)^\s*strategy:\s*\S+\s*$', s):
+    s=re.sub(r'(?m)^(\s*strategy:)\s*\S+\s*$', r'\1 sticky-sessions', s, count=1)
+else:
+    raise SystemExit('dispatcher strategy line missing')
+open(p,'w').write(s)
+PY
+    chmod 0600 "$cfg"
+    /usr/local/lib/dual-trust-mieru/mihomo -t -d /etc/dual-trust-mieru/iran/dispatcher-data -f "$cfg" >/dev/null
+    systemctl restart dual-dispatcher.service
+    sleep 2
+    systemctl is-active --quiet dual-dispatcher.service || { echo 'ERROR: dispatcher failed after sticky profile' >&2; return 1; }
+    echo 'Applied: strategy=sticky-sessions, interval=120s, lazy=true.'
+  fi
+
+  if [[ -x /usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh ]]; then
+    bash /usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh >/dev/null
+  fi
+}
+
+# Existing production: upgrade management/health in place. Carrier services and
+# x-ui are untouched. The dispatcher restarts only when the profile needs a
+# change (including round-robin -> sticky-sessions).
 if [[ -s /etc/dual-trust-mieru/iran/xudp.json ]]; then
   echo 'Existing dual installation detected: upgrading in place.'
   install_manager
   install -m 0755 "$B/dual-probe-final.sh" /usr/local/sbin/dual-tunnel-probe
-  if grep -Eq '^[[:space:]]*interval:[[:space:]]*120[[:space:]]*$' /etc/dual-trust-mieru/iran/dispatcher.yaml 2>/dev/null \
-     && grep -Eq '^[[:space:]]*lazy:[[:space:]]*true[[:space:]]*$' /etc/dual-trust-mieru/iran/dispatcher.yaml 2>/dev/null; then
-    echo 'Low-noise dispatcher profile already active; no dispatcher restart needed.'
-  else
-    /usr/local/sbin/dual-manager --apply-safe-profile
-  fi
+  ensure_dispatcher_profile
   echo
   /usr/local/sbin/dual-health --full all || true
   echo
@@ -88,7 +120,7 @@ if (( NO_ATTACH == 0 )) && systemctl is-active --quiet x-ui.service 2>/dev/null;
   bash "$B/attach-xui-final.sh"
 fi
 
-/usr/local/sbin/dual-manager --apply-safe-profile
+ensure_dispatcher_profile
 /usr/local/sbin/dual-health --full all
 
 echo
