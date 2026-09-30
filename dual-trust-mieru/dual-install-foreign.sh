@@ -36,7 +36,8 @@ fi
 [[ "$ROLE" == trust || "$ROLE" == mieru ]] || die 'role must be trust or mieru'
 
 if [[ -z "$PUBLIC_IP" && $NONINTERACTIVE -eq 0 ]]; then read -r -p 'Public IPv4: ' PUBLIC_IP; fi
-[[ "$PUBLIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die 'valid IPv4 required'
+valid_ipv4(){ local IFS=. a b c d extra o; read -r a b c d extra <<<"$1"; [[ -z "${extra:-}" && -n "${a:-}" && -n "${b:-}" && -n "${c:-}" && -n "${d:-}" ]] || return 1; for o in "$a" "$b" "$c" "$d"; do [[ "$o" =~ ^[0-9]{1,3}$ ]] && (( 10#$o <= 255 )) || return 1; done; }
+valid_ipv4 "$PUBLIC_IP" || die 'valid IPv4 required'
 
 if [[ "$ROLE" == trust ]]; then
   if [[ -z "$DOMAIN" && $NONINTERACTIVE -eq 0 ]]; then read -r -p 'Trust domain: ' DOMAIN; fi
