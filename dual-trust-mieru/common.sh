@@ -32,7 +32,7 @@ install_base_packages(){
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y --no-install-recommends ca-certificates curl unzip gzip tar openssl jq python3 iproute2 procps util-linux
+    apt-get install -y --no-install-recommends ca-certificates curl unzip gzip tar xz-utils openssl jq python3 iproute2 procps util-linux libnss3
   else
     die "v1 installer currently supports Debian/Ubuntu (apt)"
   fi
@@ -190,4 +190,39 @@ PY
 free_port(){
   local p=$1
   ! ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . || die "TCP/$p already in use"
+}
+
+
+install_naive_client(){
+  mkdirs
+  install_base_packages >/dev/null
+  local arch suffix meta tag asset url digest tmp arc found bin
+  arch=$(arch_name)
+  case "$arch" in
+    amd64) suffix='linux-x64.tar.xz' ;;
+    arm64) suffix='linux-arm64.tar.xz' ;;
+  esac
+  meta=$(mktemp)
+  curl -fsSL --retry 4 --connect-timeout 10 --max-time 60 \
+    https://api.github.com/repos/klzgrad/naiveproxy/releases/latest -o "$meta"
+  tag=$(jq -r '.tag_name // empty' "$meta")
+  asset=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | .name' "$meta" | head -n1)
+  url=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | .browser_download_url' "$meta" | head -n1)
+  digest=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | (.digest // empty)' "$meta" | head -n1)
+  rm -f "$meta"
+  [[ -n "$tag" && -n "$asset" && -n "$url" ]] || die "could not resolve latest NaiveProxy release for $arch"
+  [[ "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || die "NaiveProxy release is missing SHA256 digest"
+  bin="$BIN_DIR/naive-$tag"
+  if [[ ! -x "$bin" ]]; then
+    tmp=$(mktemp -d); arc="$tmp/$asset"
+    curl -fL --retry 4 --retry-all-errors --connect-timeout 10 --max-time 240 -o "$arc" "$url"
+    echo "${digest#sha256:}  $arc" | sha256sum -c - >/dev/null || die "NaiveProxy SHA256 mismatch"
+    mkdir -p "$tmp/x"; tar -xJf "$arc" -C "$tmp/x"
+    found=$(find "$tmp/x" -type f -name naive -perm -u+x | head -n1 || true)
+    [[ -n "$found" ]] || die "NaiveProxy archive missing naive executable"
+    install -m 0755 "$found" "$bin"
+    rm -rf "$tmp"
+  fi
+  ln -sfn "$bin" "$BIN_DIR/naive"
+  "$BIN_DIR/naive" --version 2>/dev/null | head -n1 || true
 }
