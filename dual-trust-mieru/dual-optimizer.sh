@@ -3,7 +3,9 @@ set -Eeuo pipefail
 
 HOST_OPT=/usr/local/sbin/dual-host-optimizer
 STATE=/var/lib/dual-trust-mieru/maintenance
-SERVICES=(dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher x-ui)
+A_SERVICE=dual-trust-client
+[[ -s /etc/dual-trust-mieru/iran/naive-bundle.json ]] && A_SERVICE=dual-naive-client
+SERVICES=("$A_SERVICE" dual-mieru-carrier dual-xudp-bridge dual-dispatcher x-ui)
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
