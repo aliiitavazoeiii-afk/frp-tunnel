@@ -180,6 +180,11 @@ mkdir -p "$BK"; chmod 0700 "$BK"
 [[ -s "$D/naive-client.json" ]] && cp -a "$D/naive-client.json" "$BK/" || true
 [[ -s "$D/naive-bundle.json" ]] && cp -a "$D/naive-bundle.json" "$BK/" || true
 [[ -s /etc/systemd/system/dual-naive-client.service ]] && cp -a /etc/systemd/system/dual-naive-client.service "$BK/" || true
+[[ -s /etc/systemd/system/dual-xudp-bridge.service ]] && cp -a /etc/systemd/system/dual-xudp-bridge.service "$BK/" || true
+
+AUTO_WAS=0
+systemctl is-active --quiet dual-tunnel-autoheal.timer 2>/dev/null && AUTO_WAS=1 || true
+systemctl stop dual-tunnel-autoheal.timer 2>/dev/null || true
 
 LIVE_CFG="$D/naive-client.json"
 make_cfg "$LIVE_CFG.new" 7993
@@ -212,14 +217,16 @@ rollback(){
   trap - ERR INT TERM
   log "ROLLBACK: restoring previous $OLD_KIND role-A carrier"
   systemctl disable --now dual-naive-client.service >/dev/null 2>&1 || true
+  [[ -s "$BK/dual-xudp-bridge.service" ]] && cp -a "$BK/dual-xudp-bridge.service" /etc/systemd/system/dual-xudp-bridge.service || true
   if [[ "$OLD_KIND" == naive ]]; then
     [[ -s "$BK/naive-client.json" ]] && cp -a "$BK/naive-client.json" "$D/naive-client.json"
     [[ -s "$BK/naive-bundle.json" ]] && cp -a "$BK/naive-bundle.json" "$D/naive-bundle.json"
     [[ -s "$BK/dual-naive-client.service" ]] && cp -a "$BK/dual-naive-client.service" /etc/systemd/system/dual-naive-client.service
     systemctl daemon-reload; systemctl enable --now dual-naive-client.service >/dev/null
   else
-    systemctl start dual-trust-client.service >/dev/null
+    systemctl daemon-reload; systemctl start dual-trust-client.service >/dev/null
   fi
+  (( AUTO_WAS )) && systemctl start dual-tunnel-autoheal.timer 2>/dev/null || true
   sleep 3
   log 'Previous role-A carrier restored; Mieru, bridge, dispatcher and x-ui were untouched'
   rm -f "$TMP_BUNDLE"
@@ -245,9 +252,16 @@ probe_telegram 7991 || rollback 1
 probe_udp || rollback 1
 
 if [[ "$OLD_KIND" == trust ]]; then
+  BRIDGE_UNIT=/etc/systemd/system/dual-xudp-bridge.service
+  [[ -s "$BRIDGE_UNIT" ]] || rollback 1
+  sed -i 's/dual-trust-client\.service/dual-naive-client.service/g' "$BRIDGE_UNIT"
+  systemd-analyze verify "$BRIDGE_UNIT" >/dev/null || rollback 1
+  systemctl daemon-reload
+  systemctl is-active --quiet dual-xudp-bridge.service || rollback 1
   systemctl disable dual-trust-client.service >/dev/null 2>&1 || true
   [[ -s "$D/trust-bundle.json" ]] && mv "$D/trust-bundle.json" "$D/trust-bundle.retired.json"
 fi
+(( AUTO_WAS )) && systemctl start dual-tunnel-autoheal.timer 2>/dev/null || true
 trap - ERR INT TERM
 rm -f "$TMP_BUNDLE"
 cleanup_master
