@@ -7,6 +7,7 @@ BRANCH='trust-mieru-dual'
 HEALTH=/usr/local/sbin/dual-health
 REPLACE=/usr/local/sbin/dual-replace-carrier
 OPTIMIZER=/usr/local/sbin/dual-optimizer
+MIGRATE_NAIVE=/usr/local/sbin/dual-naive-migrate
 AUTOHEAL_INSTALL=/usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
 STATE=/var/lib/dual-trust-mieru/manager
 SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPersist=600 -o ControlPath=/run/dual-ssh-%C)
@@ -25,7 +26,7 @@ banner(){
   echo '██║  ██║██║   ██║██╔══██║██║     '
   echo '██████╔╝╚██████╔╝██║  ██║███████╗'
   echo '╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝'
-  echo '      DUAL MIERU TRUST TUNNEL'
+  echo '      DUAL MIERU NAIVE TUNNEL'
   echo '      power by ali tavazoei'
   printf '%b\n' "$N"
 }
@@ -43,20 +44,26 @@ role_node(){ [[ "$1" == trust ]] && echo 'XUDP-TRUST' || echo 'XUDP-MIERU'; }
 role_tag(){ [[ "$1" == trust ]] && echo 'xudp-trust' || echo 'xudp-mieru'; }
 
 endpoint_summary(){
-  local t='unknown' m='unknown' a='unknown' d='unknown' x='unknown'
-  [[ -s "$D/trust-bundle.json" ]] && t=$(jq -r '.public_ip // "unknown"' "$D/trust-bundle.json")
+  local a='unknown' alabel='Legacy Trust IP' m='unknown' auto='unknown' d='unknown' x='unknown'
+  if [[ -s "$D/naive-bundle.json" ]]; then
+    a=$(jq -r '.public_ip // "unknown"' "$D/naive-bundle.json"); alabel='Naive IP'
+  elif [[ -s "$D/trust-bundle.json" ]]; then
+    a=$(jq -r '.public_ip // "unknown"' "$D/trust-bundle.json")
+  elif [[ -s "$D/trust-bundle.retired.json" ]]; then
+    a=$(jq -r '.public_ip // "unknown"' "$D/trust-bundle.retired.json"); alabel='Retired Trust IP'
+  fi
   [[ -s "$D/mieru-bundle.json" ]] && m=$(jq -r '.public_ip // "unknown"' "$D/mieru-bundle.json")
-  a=$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true); [[ -n "$a" ]] || a=unknown
+  auto=$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true); [[ -n "$auto" ]] || auto=unknown
   d=$(systemctl is-active dual-dispatcher 2>/dev/null || true); [[ -n "$d" ]] || d=unknown
   x=$(systemctl is-active x-ui 2>/dev/null || true); [[ -n "$x" ]] || x=unknown
   printf '%b' "$R$B"
-  printf '%-16s | %-24s\n' 'ROLE / SERVICE' 'STATUS / VALUE'
-  printf '%-16s-+-%-24s\n' '----------------' '------------------------'
-  printf '%-16s | %-24s\n' 'Trust IP' "$t"
-  printf '%-16s | %-24s\n' 'Mieru IP' "$m"
-  printf '%-16s | %-24s\n' 'Autoheal' "$a"
-  printf '%-16s | %-24s\n' 'Dispatcher' "$d"
-  printf '%-16s | %-24s\n' 'x-ui' "$x"
+  printf '%-18s | %-24s\n' 'ROLE / SERVICE' 'STATUS / VALUE'
+  printf '%-18s-+-%-24s\n' '------------------' '------------------------'
+  printf '%-18s | %-24s\n' "$alabel" "$a"
+  printf '%-18s | %-24s\n' 'Mieru IP' "$m"
+  printf '%-18s | %-24s\n' 'Autoheal' "$auto"
+  printf '%-18s | %-24s\n' 'Dispatcher' "$d"
+  printf '%-18s | %-24s\n' 'x-ui' "$x"
   printf '%b' "$N"
 }
 
@@ -217,13 +224,21 @@ replace_role(){
 }
 
 restart_role(){
-  local s
-  case "$1" in trust) s=dual-trust-client.service;; mieru) s=dual-mieru-carrier.service;; esac
-  systemctl restart "$s"; sleep 3; "$HEALTH" --quick "$1" || true
+  local which=$1 svc label
+  case "$which" in
+    a)
+      if [[ -s "$D/naive-bundle.json" ]]; then svc=dual-naive-client.service; label=naive
+      else svc=dual-trust-client.service; label=trust
+      fi ;;
+    mieru) svc=dual-mieru-carrier.service; label=mieru ;;
+    *) die 'invalid restart role' ;;
+  esac
+  systemctl restart "$svc"; sleep 3
+  if [[ "$label" == naive ]]; then "$HEALTH" --quick naive || true; else "$HEALTH" --quick "$label" || true; fi
 }
 
 show_logs(){
-  journalctl -u dual-trust-client.service -u dual-mieru-carrier.service -u dual-xudp-bridge.service -u dual-dispatcher.service \
+  journalctl -u dual-naive-client.service -u dual-trust-client.service -u dual-mieru-carrier.service -u dual-xudp-bridge.service -u dual-dispatcher.service \
     --since '-30 min' --no-pager | grep -Ei 'error|warn|timeout|closed pipe|reset|failed' | tail -n 120 || true
 }
 
@@ -246,9 +261,9 @@ while true; do
   echo
   echo '  1) Quick health check'
   echo '  2) Full health check (TCP + Telegram + UDP/XUDP)'
-  echo '  3) Replace Trust foreign server'
+  if [[ -s "$D/naive-bundle.json" ]]; then echo '  3) Replace Naive foreign server'; else echo '  3) Migrate Trust -> Naive foreign server'; fi
   echo '  4) Replace Mieru foreign server'
-  echo '  5) Restart Trust carrier only'
+  echo '  5) Restart role-A carrier only (Naive / legacy Trust)'
   echo '  6) Restart Mieru carrier only'
   echo '  7) Recent tunnel warnings/errors'
   echo '  8) Re-apply low-noise health profile'
@@ -260,9 +275,9 @@ while true; do
   case "$c" in
     1) "$HEALTH" --quick all || true ;;
     2) "$HEALTH" --full all || true ;;
-    3) replace_role trust || true ;;
+    3) [[ -x "$MIGRATE_NAIVE" ]] && "$MIGRATE_NAIVE" || echo 'Naive migration helper is not installed; run branch upgrade first.' ;;
     4) replace_role mieru || true ;;
-    5) restart_role trust ;;
+    5) restart_role a ;;
     6) restart_role mieru ;;
     7) show_logs ;;
     8) apply_safe_profile ;;
