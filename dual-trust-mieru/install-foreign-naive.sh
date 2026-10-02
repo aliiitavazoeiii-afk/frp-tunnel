@@ -160,12 +160,15 @@ LimitNOFILE=1048576
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/caddy /var/log /var/www/dual-naive-site
+Environment=HOME=/var/lib/caddy
+Environment=XDG_DATA_HOME=/var/lib/caddy/data
+Environment=XDG_CONFIG_HOME=/var/lib/caddy/config
+ReadWritePaths=/var/lib/caddy /var/www/dual-naive-site
 PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF2
-mkdir -p /var/lib/caddy
+mkdir -p /var/lib/caddy/data /var/lib/caddy/config
 systemd-analyze verify /etc/systemd/system/dual-xudp-naive.service /etc/systemd/system/dual-naive-endpoint.service >/dev/null
 systemctl daemon-reload
 systemctl enable --now dual-xudp-naive.service dual-naive-endpoint.service >/dev/null
