@@ -60,17 +60,19 @@ heal_carrier(){
   set_count "$f" 1; log "$name still unhealthy after carrier restart"; return 1
 }
 
-trust_ok=0; mieru_ok=0
-heal_carrier trust 7993 dual-trust-client.service && trust_ok=1 || true
+A_NAME=trust; A_SERVICE=dual-trust-client.service
+if [[ -s "$D/naive-bundle.json" ]]; then A_NAME=naive; A_SERVICE=dual-naive-client.service; fi
+a_ok=0; mieru_ok=0
+heal_carrier "$A_NAME" 7993 "$A_SERVICE" && a_ok=1 || true
 heal_carrier mieru 7994 dual-mieru-carrier.service && mieru_ok=1 || true
 
 # TCP on 7991/7992 is intentionally direct-carrier traffic. It is NOT an XUDP test.
 # Therefore only UDP probes are allowed to influence XUDP/bridge diagnosis.
-if (( trust_ok && mieru_ok )); then
+if (( a_ok && mieru_ok )); then
   t_udp=0; m_udp=0
   probe_udp 7991 && t_udp=1 || true
   probe_udp 7992 && m_udp=1 || true
-  [[ $t_udp == 1 ]] || log 'trust UDP/XUDP degraded; shared bridge not restarted for a one-role failure'
+  [[ $t_udp == 1 ]] || log "$A_NAME UDP/XUDP degraded; shared bridge not restarted for a one-role failure"
   [[ $m_udp == 1 ]] || log 'mieru UDP/XUDP degraded; shared bridge not restarted for a one-role failure'
   bf="$STATE/bridge.failcount"
   if (( t_udp == 0 && m_udp == 0 )); then
