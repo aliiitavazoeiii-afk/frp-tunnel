@@ -274,7 +274,7 @@ while true; do
   case "$c" in
     1) "$HEALTH" --quick all || true ;;
     2) "$HEALTH" --full all || true ;;
-    3) [[ -x "$MIGRATE_NAIVE" ]] && "$MIGRATE_NAIVE" || echo 'Naive migration helper is not installed; run branch upgrade first.' ;;
+    3) if [[ -x "$MIGRATE_NAIVE" ]]; then "$MIGRATE_NAIVE" || true; else echo 'Naive migration helper is not installed; run branch upgrade first.'; fi ;;
     4) replace_role mieru || true ;;
     5) restart_role a ;;
     6) restart_role mieru ;;
