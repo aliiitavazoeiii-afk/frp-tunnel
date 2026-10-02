@@ -16,7 +16,7 @@ done
 
 banner(){
   echo '============================================================'
-  echo '              DUAL MIERU TRUST TUNNEL'
+  echo '              DUAL MIERU NAIVE TUNNEL'
   echo '                 power by ali tavazoei'
   echo '============================================================'
 }
@@ -32,6 +32,8 @@ install_manager(){
   install -m 0755 "$B/dual-cli.sh" /usr/local/bin/dual
   install -m 0755 "$B/dual-optimizer.sh" /usr/local/sbin/dual-optimizer
   install -m 0755 "$B/host-optimizer.sh" /usr/local/sbin/dual-host-optimizer
+  install -m 0644 "$B/common.sh" /usr/local/lib/dual-trust-mieru-manager/common.sh
+  install -m 0755 "$B/migrate-trust-to-naive.sh" /usr/local/sbin/dual-naive-migrate
   install -m 0755 "$B/replace-carrier-only-final.sh" /usr/local/sbin/dual-replace-carrier
   install -m 0755 "$B/dual-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/dual-autoheal.sh
   install -m 0755 "$B/install-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/install-autoheal.sh
@@ -85,7 +87,7 @@ if [[ -s /etc/dual-trust-mieru/iran/xudp.json ]]; then
   echo
   /usr/local/sbin/dual-health --full all || true
   echo
-  echo 'UPGRADE COMPLETE. Use: dual status'
+  echo 'UPGRADE COMPLETE. Use: dual status (option 3 migrates/replaces Naive)'
   exit 0
 fi
 
