@@ -4,8 +4,13 @@ set -Eeuo pipefail
 D=/etc/dual-trust-mieru/iran
 MODE=${1:---quick}
 ROLE_FILTER=${2:-all}
-[[ "$MODE" == --quick || "$MODE" == --full ]] || { echo "usage: dual-health [--quick|--full] [all|trust|mieru]" >&2; exit 2; }
-[[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == trust || "$ROLE_FILTER" == mieru ]] || { echo "invalid role" >&2; exit 2; }
+[[ "$MODE" == --quick || "$MODE" == --full ]] || { echo "usage: dual-health [--quick|--full] [all|naive|mieru|trust]" >&2; exit 2; }
+[[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == naive || "$ROLE_FILTER" == trust || "$ROLE_FILTER" == mieru ]] || { echo "invalid role" >&2; exit 2; }
+
+A_NAME=Trust; A_SERVICE=dual-trust-client; A_BUNDLE="$D/trust-bundle.json"
+if [[ -s "$D/naive-bundle.json" ]]; then
+  A_NAME=Naive; A_SERVICE=dual-naive-client; A_BUNDLE="$D/naive-bundle.json"
+fi
 
 if [[ -t 1 ]]; then
   G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; C=$'\e[36m'; B=$'\e[1m'; N=$'\e[0m'
@@ -91,24 +96,24 @@ probe_udp_label(){
 
 role_ip(){ local f=$1; [[ -s "$f" ]] && jq -r '.public_ip // "unknown"' "$f" 2>/dev/null || echo unknown; }
 
-printf '%b%s%b\n' "$B$C" 'DUAL MIERU TRUST TUNNEL — HEALTH' "$N"
-if [[ -s "$D/trust-bundle.json" ]]; then printf 'Trust foreign : %s\n' "$(role_ip "$D/trust-bundle.json")"; fi
+printf '%b%s%b\n' "$B$C" 'DUAL MIERU NAIVE TUNNEL — HEALTH' "$N"
+if [[ -s "$A_BUNDLE" ]]; then printf '%s foreign : %s\n' "$A_NAME" "$(role_ip "$A_BUNDLE")"; fi
 if [[ -s "$D/mieru-bundle.json" ]]; then printf 'Mieru foreign : %s\n' "$(role_ip "$D/mieru-bundle.json")"; fi
 
 echo
 printf '%bServices%b\n' "$B" "$N"
-for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher x-ui; do
+for s in "$A_SERVICE" dual-mieru-carrier dual-xudp-bridge dual-dispatcher x-ui; do
   if systemctl is-active --quiet "$s.service" 2>/dev/null; then ok "$s"; else bad "$s"; fi
 done
 
 echo
 printf '%bPaths%b\n' "$B" "$N"
 fail=0
-if [[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == trust ]]; then
-  probe_http_label 'Trust direct :7993' 7993 || fail=1
-  probe_http_label 'Trust TCP    :7991' 7991 || fail=1
-  probe_telegram 'Trust path   :7991' 7991 3 || fail=1
-  if [[ "$MODE" == --full ]]; then probe_udp_label 'Trust path   :7991' 7991 2 || fail=1; fi
+if [[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == naive || "$ROLE_FILTER" == trust ]]; then
+  probe_http_label "$A_NAME direct :7993" 7993 || fail=1
+  probe_http_label "$A_NAME TCP    :7991" 7991 || fail=1
+  probe_telegram "$A_NAME path   :7991" 7991 3 || fail=1
+  if [[ "$MODE" == --full ]]; then probe_udp_label "$A_NAME path   :7991" 7991 2 || fail=1; fi
 fi
 if [[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == mieru ]]; then
   probe_http_label 'Mieru direct :7994' 7994 || fail=1
