@@ -59,7 +59,7 @@ grep -q 'caddy-forwardproxy-naive.tar.xz' install-foreign-naive.sh || { echo 'Na
 grep -q 'api.github.com/repos/klzgrad/naiveproxy/releases/latest' common.sh || { echo 'Naive client latest-release installer missing' >&2; exit 1; }
 grep -q 'ROLLBACK: restoring previous' migrate-trust-to-naive.sh || { echo 'Naive migration rollback missing' >&2; exit 1; }
 grep -q 'probe_udp' migrate-trust-to-naive.sh || { echo 'Naive migration UDP/XUDP gate missing' >&2; exit 1; }
-grep -q 'dual-naive-client.service' dual-health.sh || { echo 'health screen missing Naive service support' >&2; exit 1; }
+grep -q 'A_SERVICE=dual-naive-client' dual-health.sh || { echo 'health screen missing Naive service support' >&2; exit 1; }
 ! grep -Eq 'systemctl restart (dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|x-ui)' migrate-trust-to-naive.sh || { echo 'Naive migration must not restart shared/other services' >&2; exit 1; }
 
 grep -q 'chmod 0755.*dual-probe.sh' attach-xui-final.sh || { echo 'final x-ui attach wrapper missing probe executable normalization' >&2; exit 1; }
