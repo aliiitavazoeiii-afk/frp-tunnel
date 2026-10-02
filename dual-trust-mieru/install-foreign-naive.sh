@@ -34,8 +34,25 @@ for x in "$D" "$BUNDLE" /etc/systemd/system/dual-naive-endpoint.service /etc/sys
   [[ ! -e "$x" ]] || die "existing Naive state found at $x; run uninstall-foreign-naive.sh first"
 done
 
+cleanup_failed_install(){
+  local rc=$?
+  trap - EXIT
+  if (( rc != 0 )); then
+    log 'Naive foreign install failed; removing only partial Naive state'
+    systemctl disable --now dual-naive-endpoint.service dual-xudp-naive.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/dual-naive-endpoint.service /etc/systemd/system/dual-xudp-naive.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    rm -rf "$D" "$BUNDLE" /var/www/dual-naive-site
+    sed -i '/# dual-naive-xudp-backend$/d' /etc/hosts 2>/dev/null || true
+  fi
+  exit "$rc"
+}
+trap cleanup_failed_install EXIT
+
 install_base_packages
 mkdirs
+free_port 443
+free_port 2443
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
   ufw allow 443/tcp comment 'dual-naive-https' >/dev/null || true
 fi
@@ -214,3 +231,4 @@ unset USER_PASS XUDP_UUID
 log 'SUCCESS: Naive foreign is healthy on HTTPS/443 with loopback XUDP backend'
 log "Client bundle: $BUNDLE (0600; do not paste into chat/repo)"
 log "Bundle SHA256: $(sha256sum "$BUNDLE" | awk '{print $1}')"
+trap - EXIT
