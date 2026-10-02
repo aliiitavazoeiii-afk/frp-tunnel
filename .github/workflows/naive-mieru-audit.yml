@@ -1,0 +1,14 @@
+name: naive-mieru-audit
+on:
+  push:
+    branches: [naive-mieru-dual]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax and source assertions
+        run: |
+          cd dual-trust-mieru
+          bash source-audit.sh
