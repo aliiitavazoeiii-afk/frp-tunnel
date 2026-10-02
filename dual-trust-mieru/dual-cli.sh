@@ -4,5 +4,5 @@ case "${1:-status}" in
   status) shift || true; exec /usr/local/sbin/dual-manager "$@" ;;
   health) shift || true; exec /usr/local/sbin/dual-health "${1:---quick}" "${2:-all}" ;;
   optimize) shift || true; exec /usr/local/sbin/dual-optimizer "$@" ;;
-  *) echo 'usage: dual [status|health [--quick|--full] [all|trust|mieru]|optimize]' >&2; exit 2 ;;
+  *) echo 'usage: dual [status|health [--quick|--full] [all|naive|mieru|trust]|optimize]' >&2; exit 2 ;;
 esac
