@@ -75,10 +75,21 @@ USER_NAME="dnm-$(openssl rand -hex 4)"
 USER_PASS=$(openssl rand -hex 32)
 XUDP_UUID=$(json_uuid)
 
+mkdir -p /var/www/dual-naive-site/assets
 cat > /var/www/dual-naive-site/index.html <<EOF2
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>$DOMAIN</title></head><body><main style="max-width:720px;margin:12vh auto;font:16px system-ui;padding:24px">
-<h1>Welcome</h1><p>This site is online.</p></main></body></html>
+<title>$DOMAIN</title><link rel="stylesheet" href="/assets/site.css"><link rel="icon" href="/assets/mark.svg"></head>
+<body><main><img src="/assets/mark.svg" alt="" width="42" height="42"><h1>Welcome</h1><p>This site is online.</p></main>
+<script src="/assets/app.js" defer></script></body></html>
+EOF2
+cat > /var/www/dual-naive-site/assets/site.css <<'EOF2'
+:root{font-family:system-ui,-apple-system,sans-serif;color-scheme:light dark}body{margin:0}main{max-width:720px;margin:12vh auto;padding:24px}img{opacity:.9}
+EOF2
+cat > /var/www/dual-naive-site/assets/app.js <<'EOF2'
+document.documentElement.dataset.ready='1';
+EOF2
+cat > /var/www/dual-naive-site/assets/mark.svg <<'EOF2'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#777"/><path d="M18 34h28M32 18v28" stroke="#fff" stroke-width="5" stroke-linecap="round"/></svg>
 EOF2
 
 for h in xudp-naive.internal xudp-trust.internal; do
