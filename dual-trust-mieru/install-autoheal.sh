@@ -5,8 +5,8 @@ B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 install -m 0755 "$B/dual-autoheal.sh" /usr/local/sbin/dual-tunnel-autoheal
 cat > /etc/systemd/system/dual-tunnel-autoheal.service <<'EOT'
 [Unit]
-Description=Dual Trust/Mieru conservative auto-heal
-After=network-online.target dual-trust-client.service dual-mieru-carrier.service dual-xudp-bridge.service
+Description=Dual Naive/Mieru conservative auto-heal
+After=network-online.target dual-naive-client.service dual-trust-client.service dual-mieru-carrier.service dual-xudp-bridge.service
 Wants=network-online.target
 [Service]
 Type=oneshot
