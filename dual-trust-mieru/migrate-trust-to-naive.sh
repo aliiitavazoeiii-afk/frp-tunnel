@@ -163,10 +163,10 @@ PY
 
 PREF=$(mktemp /root/.dual-naive-preflight.XXXXXX.json); PLOG=$(mktemp)
 make_cfg "$PREF" 17993
-"$BIN_DIR/naive" "$PREF" >"$PLOG" 2>&1 & PPID=$!
-cleanup_preflight(){ kill "$PPID" >/dev/null 2>&1 || true; wait "$PPID" 2>/dev/null || true; rm -f "$PREF" "$PLOG"; }
+"$BIN_DIR/naive" "$PREF" >"$PLOG" 2>&1 & NP_PID=$!
+cleanup_preflight(){ kill "$NP_PID" >/dev/null 2>&1 || true; wait "$NP_PID" 2>/dev/null || true; rm -f "$PREF" "$PLOG"; }
 for _ in $(seq 1 80); do
-  kill -0 "$PPID" 2>/dev/null || { tail -n 60 "$PLOG" >&2 || true; cleanup_preflight; die 'Naive preflight client exited'; }
+  kill -0 "$NP_PID" 2>/dev/null || { tail -n 60 "$PLOG" >&2 || true; cleanup_preflight; die 'Naive preflight client exited'; }
   ss -H -ltn 'sport = :17993' 2>/dev/null | grep -q . && break
   sleep .2
 done
