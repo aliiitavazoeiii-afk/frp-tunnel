@@ -239,7 +239,7 @@ while true; do
   echo
   read -r -p 'Select: ' c; echo
   case "$c" in
-    1) [[ -s "$L3_ROOT/bundle.json" ]] && replace_foreign || first_import ;;
+    1) if [[ -s "$L3_ROOT/bundle.json" ]]; then replace_foreign; else first_import; fi ;;
     2) "$HEALTH" || true ;;
     3) "$ROUTE" apply split ;;
     4) assign ;;
