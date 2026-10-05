@@ -52,7 +52,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y --no-install-recommends ca-certificates curl jq xz-utils openssl dnsutils >/dev/null
+apt-get install -y --no-install-recommends ca-certificates curl jq xz-utils openssl dnsutils python3 iproute2 >/dev/null
 
 arch=$(uname -m)
 case "$arch" in
