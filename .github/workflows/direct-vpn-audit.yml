@@ -1,0 +1,25 @@
+name: direct-vpn audit
+
+on:
+  push:
+    branches: [direct-vpn]
+    paths:
+      - "direct-vpn/**"
+      - ".github/workflows/direct-vpn-audit.yml"
+  pull_request:
+    paths:
+      - "direct-vpn/**"
+      - ".github/workflows/direct-vpn-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run direct-vpn source audit
+        run: |
+          cd direct-vpn
+          bash source-audit.sh
