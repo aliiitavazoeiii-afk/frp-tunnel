@@ -16,7 +16,10 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ -d "$D" ]] || die "Iran dual tunnel is not installed"
 [[ -x "$BIN/xray" && -x "$BIN/mihomo" ]] || die "dual binaries missing"
 
-for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher; do
+# A role replacement must be independent from the sibling carrier.
+# Trust may be down while repairing Mieru (and vice versa). Only the shared
+# split/XUDP router and dispatcher are hard prerequisites for a cutover.
+for s in dual-xudp-bridge dual-dispatcher; do
   systemctl is-active --quiet "$s.service" || die "$s is not active"
 done
 
