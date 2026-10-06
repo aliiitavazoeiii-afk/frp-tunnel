@@ -9,7 +9,11 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'run as root'
 [[ "$ROLE" == trust || "$ROLE" == mieru ]] || die "usage: $0 trust|mieru /root/new-client-bundle.json"
 [[ -s "$BUNDLE" && -s "$D/xudp.json" ]] || die 'bundle or Iran dual state missing'
-for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher; do systemctl is-active --quiet "$s.service" || die "$s inactive"; done
+# Role-local replacement: the sibling carrier may be down while this role
+# is being repaired. Shared bridge + dispatcher must remain healthy.
+for s in dual-xudp-bridge dual-dispatcher; do
+  systemctl is-active --quiet "$s.service" || die "$s inactive"
+done
 
 if [[ "$ROLE" == trust ]]; then
   jq -e '.version==1 and .kind=="trust" and .public_ip and .domain and .port and .username and .password and .xudp_uuid' "$BUNDLE" >/dev/null || die 'invalid Trust bundle'
