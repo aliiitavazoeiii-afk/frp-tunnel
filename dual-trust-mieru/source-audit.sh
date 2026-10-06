@@ -44,6 +44,8 @@ grep -q 'UDP/XUDP' dual-health.sh || { echo 'health screen missing UDP/XUDP chec
 grep -q 'api.telegram.org' replace-carrier-only-final.sh || { echo 'carrier replacement missing Telegram gate' >&2; exit 1; }
 grep -q 'probe_udp_stable' replace-carrier-only-final.sh || { echo 'carrier replacement missing UDP/XUDP gate' >&2; exit 1; }
 grep -q 'multiplexing: MULTIPLEXING_OFF' replace-carrier-only-final.sh || { echo 'carrier replacement would regress Mieru mux mode' >&2; exit 1; }
+grep -q 'for s in dual-xudp-bridge dual-dispatcher' replace-carrier-only-final.sh || { echo 'carrier replacement is still coupled to sibling carrier health' >&2; exit 1; }
+! grep -q 'for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher' replace-carrier-only-final.sh || { echo 'legacy all-carriers-active precheck survived' >&2; exit 1; }
 grep -q 'DUAL MIERU TRUST TUNNEL' dual-manager.sh || { echo 'manager banner missing' >&2; exit 1; }
 grep -q 'Replace Trust foreign server' dual-manager.sh || { echo 'manager missing Trust replacement action' >&2; exit 1; }
 grep -q 'Replace Mieru foreign server' dual-manager.sh || { echo 'manager missing Mieru replacement action' >&2; exit 1; }
