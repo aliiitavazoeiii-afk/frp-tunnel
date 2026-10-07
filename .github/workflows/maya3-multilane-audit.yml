@@ -1,0 +1,14 @@
+name: maya3-multilane-audit
+on:
+  push:
+    branches: [maya3-multilane-naive]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax and isolation assertions
+        run: |
+          cd dual-trust-mieru
+          bash lane3-source-audit.sh
