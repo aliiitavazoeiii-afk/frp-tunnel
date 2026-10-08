@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT=/etc/maya4-naive
 XUI_DB=/etc/x-ui/x-ui.db
+XUI_TEMPLATE_FILE=/usr/local/x-ui/bin/config.json
 BACKUPS=/var/lib/maya4-naive/backups
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
@@ -77,16 +78,29 @@ trap 'rollback 143' TERM
 
 systemctl stop x-ui.service
 
-XUI_DB="$XUI_DB" PUBLIC_TAG="$tag" python3 <<'PY'
+XUI_DB="$XUI_DB" XUI_TEMPLATE_FILE="$XUI_TEMPLATE_FILE" PUBLIC_TAG="$tag" python3 <<'PY'
 import json,os,sqlite3
-p=os.environ['XUI_DB']; tag=os.environ['PUBLIC_TAG']
+p=os.environ['XUI_DB']; tag=os.environ['PUBLIC_TAG']; template_file=os.environ['XUI_TEMPLATE_FILE']
 con=sqlite3.connect(p)
 try:
     con.execute('BEGIN IMMEDIATE')
     row=con.execute("SELECT value FROM settings WHERE key='xrayTemplateConfig'").fetchone()
-    if not row:
-        raise RuntimeError('xrayTemplateConfig missing')
-    cfg=json.loads(row[0])
+    if row:
+        cfg=json.loads(row[0])
+        template_source='sqlite'
+    else:
+        # Fresh 3X-UI v2.9.4 normally has no xrayTemplateConfig row.
+        # SettingService falls back to its embedded default. The generated
+        # on-disk config is that effective template before DB inbounds are
+        # dynamically added, so preserve it as the baseline for our first
+        # persisted customization.
+        with open(template_file) as f:
+            cfg=json.load(f)
+        template_source='v2.9.4-generated-default'
+        if not any(i.get('tag')=='api' for i in cfg.get('inbounds',[])):
+            raise RuntimeError('fallback Xray template has no api inbound')
+        if not any(o.get('tag')=='direct' for o in cfg.get('outbounds',[])):
+            raise RuntimeError('fallback Xray template has no direct outbound')
 
     obs=cfg.setdefault('outbounds',[])
     obs=[o for o in obs if o.get('tag')!='maya4-naive']
@@ -121,8 +135,12 @@ try:
     }
     routing['rules']=[api,managed]+rest
     payload=json.dumps(cfg,separators=(',',':'))
-    con.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(payload,))
+    if row:
+        con.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(payload,))
+    else:
+        con.execute("INSERT INTO settings(key,value) VALUES('xrayTemplateConfig',?)",(payload,))
     con.commit()
+    print(f'X-UI TEMPLATE SOURCE: {template_source}')
 finally:
     con.close()
 PY
