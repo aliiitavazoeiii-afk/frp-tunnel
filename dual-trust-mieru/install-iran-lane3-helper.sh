@@ -49,5 +49,6 @@ echo 'Trust/Mieru carriers and shared bridge were NOT restarted or modified.'
 echo 'x-ui routing/DB was NOT changed.'
 echo 'Naive joins the same :7990 health-aware pool only after its full health passes.'
 echo
-echo 'Open Naive carrier panel with: lane3'
+echo 'Main manager: dual status'
+echo 'Naive carrier panel: lane3'
 echo 'Unified health: dual health --full all'
