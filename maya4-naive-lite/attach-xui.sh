@@ -18,6 +18,9 @@ systemctl is-active --quiet maya4-xudp-router.service || die 'Maya4 router inact
 
 /usr/local/sbin/maya4-health >/dev/null || die 'Maya4 tunnel must be healthy before attach'
 
+XUI_XRAY=$(find /usr/local/x-ui/bin -maxdepth 1 -type f -name 'xray-linux-*' -perm -u+x | head -n1 || true)
+[[ -n "$XUI_XRAY" ]] || die '3X-UI bundled Xray binary not found'
+
 # Modern 3X-UI stores user inbounds in SQLite and merges them into the generated
 # Xray config at runtime. /usr/local/x-ui/bin/config.json is only the template,
 # so discover the real public inbound from the DB, not from that file.
@@ -76,9 +79,11 @@ trap 'rollback $?' ERR
 trap 'rollback 130' INT
 trap 'rollback 143' TERM
 
+candidate="$bk/xray-template-candidate.json"
+
 systemctl stop x-ui.service
 
-XUI_DB="$XUI_DB" XUI_TEMPLATE_FILE="$XUI_TEMPLATE_FILE" PUBLIC_TAG="$tag" python3 <<'PY'
+XUI_DB="$XUI_DB" XUI_TEMPLATE_FILE="$XUI_TEMPLATE_FILE" XUI_CANDIDATE="$candidate" PUBLIC_TAG="$tag" python3 <<'PY'
 import json,os,sqlite3
 p=os.environ['XUI_DB']; tag=os.environ['PUBLIC_TAG']; template_file=os.environ['XUI_TEMPLATE_FILE']
 con=sqlite3.connect(p)
@@ -107,9 +112,7 @@ try:
     obs.append({
       'tag':'maya4-naive',
       'protocol':'socks',
-      'targetStrategy':'AsIs',
-      'settings':{'servers':[{'address':'127.0.0.1','port':7996,'users':[]}]},
-      'mux':{'enabled':False}
+      'settings':{'servers':[{'address':'127.0.0.1','port':7996}]}
     })
     cfg['outbounds']=obs
 
@@ -121,7 +124,7 @@ try:
         if isinstance(tags,str): tags=[tags]
         if api is None and r.get('outboundTag')=='api' and 'api' in tags:
             api=r; continue
-        if str(r.get('ruleTag',''))=='maya4-naive-all':
+        if r.get('outboundTag')=='maya4-naive':
             continue
         rest.append(r)
     if api is None:
@@ -130,11 +133,14 @@ try:
     managed={
       'type':'field',
       'inboundTag':[tag],
-      'outboundTag':'maya4-naive',
-      'ruleTag':'maya4-naive-all'
+      'outboundTag':'maya4-naive'
     }
     routing['rules']=[api,managed]+rest
     payload=json.dumps(cfg,separators=(',',':'))
+    candidate=os.environ.get('XUI_CANDIDATE')
+    if candidate:
+        with open(candidate,'w') as f:
+            json.dump(cfg,f,indent=2)
     if row:
         con.execute("UPDATE settings SET value=? WHERE key='xrayTemplateConfig'",(payload,))
     else:
@@ -145,10 +151,24 @@ finally:
     con.close()
 PY
 
+log 'Validating Maya4 template with bundled 3X-UI v2.9.4 Xray'
+if ! "$XUI_XRAY" run -test -c "$candidate"; then
+  echo 'ERROR: bundled Xray rejected Maya4 candidate before runtime start' >&2
+  rollback 1
+fi
+
 systemctl start x-ui.service
 sleep 5
-systemctl is-active --quiet x-ui.service || rollback 1
-ss -H -ltn 'sport = :443' 2>/dev/null | grep -q . || rollback 1
+systemctl is-active --quiet x-ui.service || {
+  journalctl -u x-ui.service -n 80 --no-pager >&2 || true
+  rollback 1
+}
+if ! ss -H -ltn 'sport = :443' 2>/dev/null | grep -q .; then
+  echo 'ERROR: x-ui service is active but Xray public :443 did not return' >&2
+  journalctl -u x-ui.service -n 120 --no-pager >&2 || true
+  tail -n 120 /var/log/x-ui/x-ui.log 2>/dev/null >&2 || true
+  rollback 1
+fi
 
 # Validate the persisted template because modern 3X-UI generates real inbounds
 # dynamically from SQLite; the on-disk config.json does not contain them.
@@ -171,7 +191,14 @@ if not sv or sv[0].get('address')!='127.0.0.1' or int(sv[0].get('port',0))!=7996
     raise SystemExit('maya4-naive target wrong')
 
 rules=c.get('routing',{}).get('rules',[])
-hits=[r for r in rules if r.get('ruleTag')=='maya4-naive-all' and r.get('outboundTag')=='maya4-naive']
+hits=[]
+for r in rules:
+    if r.get('outboundTag')!='maya4-naive':
+        continue
+    rt=r.get('inboundTag') or []
+    if isinstance(rt,str): rt=[rt]
+    if tag in rt:
+        hits.append(r)
 if len(hits)!=1:
     raise SystemExit('maya4 managed route missing')
 tags=hits[0].get('inboundTag') or []
