@@ -205,7 +205,24 @@ done
 systemctl is-active --quiet lane3-xudp.service || die 'lane3-xudp inactive'
 systemctl is-active --quiet lane3-naive-endpoint.service || { journalctl -u lane3-naive-endpoint -n 100 --no-pager >&2 || true; die 'lane3 Naive endpoint inactive'; }
 ss -H -ltn 'sport = :2443' | grep -q '127.0.0.1:2443' || die 'Lane 3 XUDP loopback missing'
-curl -fsS --connect-timeout 6 --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" >/dev/null || die 'public HTTPS fronting page not ready'
+
+# Caddy becomes active/listens before ACME certificate issuance necessarily
+# finishes. Do not fail the whole install on the first TLS handshake.
+log 'Waiting for public TLS/fronting page readiness'
+ready=0
+for _ in $(seq 1 90); do
+  if curl -fsS --connect-timeout 5 --max-time 10 \
+      --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  systemctl is-active --quiet lane3-naive-endpoint.service || break
+  sleep 1
+done
+if (( ready != 1 )); then
+  journalctl -u lane3-naive-endpoint.service -n 120 --no-pager >&2 || true
+  die 'public HTTPS fronting page did not become TLS-ready within 90s'
+fi
 
 export PUBLIC_IP DOMAIN EMAIL USER_NAME USER_PASS XUDP_UUID
 python3 - "$BUNDLE" <<'PY'
