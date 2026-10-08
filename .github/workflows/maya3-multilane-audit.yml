@@ -1,14 +1,18 @@
-name: maya3-multilane-audit
+name: triple-carrier-audit
 on:
   push:
-    branches: [maya3-multilane-naive]
+    branches: [triple-carrier-naive]
   workflow_dispatch:
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Bash syntax and isolation assertions
+      - name: Production baseline audit
+        run: |
+          cd dual-trust-mieru
+          bash source-audit.sh
+      - name: Unified triple carrier audit
         run: |
           cd dual-trust-mieru
           bash lane3-source-audit.sh
