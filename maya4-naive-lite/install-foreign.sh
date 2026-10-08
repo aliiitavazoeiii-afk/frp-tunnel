@@ -20,9 +20,21 @@ read -r -p "Let's Encrypt email: " EMAIL
 
 D=/etc/maya4-naive-foreign
 BUNDLE=/root/maya4-naive-client.json
-[[ ! -e "$D" && ! -e "$BUNDLE" ]] || die 'existing Maya4 Naive foreign state found; inspect before reinstalling'
-! ss -H -ltn 'sport = :443' 2>/dev/null | grep -q . || die 'TCP/443 already in use'
-! ss -H -ltn 'sport = :2443' 2>/dev/null | grep -q . || die 'TCP/2443 already in use'
+RESUME_EXISTING=0
+
+if [[ -d "$D" && ! -s "$BUNDLE" && -s "$D/Caddyfile" && -s "$D/xray.json" ]] \
+   && systemctl is-active --quiet maya4-naive-endpoint.service \
+   && systemctl is-active --quiet maya4-xudp.service; then
+  RESUME_EXISTING=1
+  log 'Detected healthy partial Maya4 foreign install; resuming final validation/bundle creation'
+elif [[ -e "$D" || -e "$BUNDLE" ]]; then
+  die 'existing Maya4 Naive foreign state found but it is not safely resumable; inspect before reinstalling'
+fi
+
+if (( RESUME_EXISTING == 0 )); then
+  ! ss -H -ltn 'sport = :443' 2>/dev/null | grep -q . || die 'TCP/443 already in use'
+  ! ss -H -ltn 'sport = :2443' 2>/dev/null | grep -q . || die 'TCP/2443 already in use'
+fi
 
 mapfile -t dnsips < <(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)
 printf '%s\n' "${dnsips[@]:-}" | grep -Fxq "$PUBLIC_IP" || die "DNS A record for $DOMAIN must point to $PUBLIC_IP"
@@ -49,6 +61,7 @@ install_caddy(){
   fi
   ln -sfn "$BIN/caddy-naive-$tag" "$BIN/caddy-naive"
 }
+if (( RESUME_EXISTING == 0 )); then
 install_caddy
 
 mkdir -p "$D" /var/www/maya4-naive /var/lib/maya4-caddy/data /var/lib/maya4-caddy/config
@@ -161,12 +174,21 @@ EOF
 systemd-analyze verify /etc/systemd/system/maya4-xudp.service /etc/systemd/system/maya4-naive-endpoint.service >/dev/null
 systemctl daemon-reload
 systemctl enable --now maya4-xudp.service maya4-naive-endpoint.service >/dev/null
+else
+  USER_NAME=$(awk '$1=="basic_auth"{print $2; exit}' "$D/Caddyfile")
+  USER_PASS=$(awk '$1=="basic_auth"{print $3; exit}' "$D/Caddyfile")
+  XUDP_UUID=$(jq -r '.inbounds[] | select(.tag=="maya4-xudp-in") | .settings.users[0].id // empty' "$D/xray.json")
+  [[ -n "$USER_NAME" && -n "$USER_PASS" ]] || die 'could not recover existing Naive credentials'
+  [[ "$XUDP_UUID" =~ ^[0-9a-fA-F-]{36}$ ]] || die 'could not recover existing XUDP UUID'
+fi
 
 log 'Waiting for TLS readiness'
 ready=0
 for _ in $(seq 1 90); do
-  if curl -fsS --connect-timeout 5 --max-time 10 \
-      --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" >/dev/null 2>&1; then
+  # Any HTTP status is acceptable here (for example 407 from an authenticated
+  # forward proxy). We only require a successful TLS handshake and HTTP exchange.
+  if curl -sS --connect-timeout 5 --max-time 10 \
+      --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null "https://$DOMAIN/" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -175,7 +197,7 @@ for _ in $(seq 1 90); do
 done
 (( ready == 1 )) || {
   journalctl -u maya4-naive-endpoint.service -n 100 --no-pager >&2 || true
-  die 'TLS endpoint did not become ready'
+  die 'TLS handshake did not become ready'
 }
 
 export PUBLIC_IP DOMAIN EMAIL USER_NAME USER_PASS XUDP_UUID
