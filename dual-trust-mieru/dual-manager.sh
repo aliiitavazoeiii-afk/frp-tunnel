@@ -25,7 +25,7 @@ banner(){
   echo '██║  ██║██║   ██║██╔══██║██║     '
   echo '██████╔╝╚██████╔╝██║  ██║███████╗'
   echo '╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝'
-  echo '      DUAL MIERU TRUST TUNNEL'
+  echo '      TRIPLE TRUST MIERU NAIVE TUNNEL'
   echo '      power by ali tavazoei'
   printf '%b\n' "$N"
 }
