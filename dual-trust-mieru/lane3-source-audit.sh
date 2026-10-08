@@ -6,7 +6,7 @@ cd "$B"
 echo "=== Unified Trust/Mieru/Naive source audit ==="
 printf 'lane3_version='; cat LANE3_VERSION
 
-for f in lane3-common.sh install-foreign-lane3-naive.sh install-iran-lane3-helper.sh lane3-health.sh lane3-manager.sh uninstall-foreign-lane3-naive.sh dual-health.sh dual-autoheal.sh dual-manager.sh dual-cli.sh; do
+for f in lane3-common.sh install-foreign-lane3-naive.sh install-iran-lane3-helper.sh migrate-xui-split-to-unified.sh lane3-health.sh lane3-manager.sh uninstall-foreign-lane3-naive.sh dual-health.sh dual-autoheal.sh dual-manager.sh dual-cli.sh; do
   printf '%-42s ' "$f"
   bash -n "$f"
   echo OK
@@ -39,6 +39,10 @@ grep -q 'Naive IP' dual-manager.sh
 grep -q 'Naive in pool' dual-manager.sh
 grep -q 'was NOT deleted automatically' dual-manager.sh
 grep -q 'lane3-pool.py.*lane3-pool' install-iran-lane3-helper.sh
+grep -q 'migrate-xui-split-to-unified.sh.*migrate-xui-split-to-unified' install-iran-lane3-helper.sh
+grep -q 'triple-unified-entry' migrate-xui-split-to-unified.sh
+grep -q 'ROLLBACK: restoring previous x-ui database' migrate-xui-split-to-unified.sh
+grep -q 'lane3-xui-route.legacy-disabled' migrate-xui-split-to-unified.sh
 
 if grep -Eq '/etc/x-ui|x-ui\.db|xrayTemplateConfig|lane3-xui-route' install-iran-lane3-helper.sh lane3-manager.sh lane3-pool.py; then
   echo 'ERROR: unified helper/manager must not patch x-ui routing' >&2
