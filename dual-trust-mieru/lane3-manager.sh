@@ -5,6 +5,7 @@ source "$LIB/lane3-common.sh"
 l3_root
 l3_mkdirs
 
+POOL=/usr/local/sbin/lane3-pool
 HEALTH=/usr/local/sbin/dual-health
 SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPersist=600 -o ControlPath=/run/lane3-ssh-%C)
 
@@ -28,15 +29,15 @@ status(){
   [[ -s /etc/dual-trust-mieru/iran/trust-bundle.json ]] && trust=$(jq -r '.public_ip // "-"' /etc/dual-trust-mieru/iran/trust-bundle.json)
   [[ -s /etc/dual-trust-mieru/iran/mieru-bundle.json ]] && mieru=$(jq -r '.public_ip // "-"' /etc/dual-trust-mieru/iran/mieru-bundle.json)
   [[ -s "$L3_ROOT/bundle.json" ]] && l3=$(jq -r '.public_ip // "unknown"' "$L3_ROOT/bundle.json")
-  dispatcher_has_naive && pool='ENABLED' || true
+  [[ -x "$POOL" ]] && pool=$("$POOL" status 2>/dev/null || echo DISABLED)
   s1=$(systemctl is-active lane3-naive-client.service 2>/dev/null || true); [[ -n "$s1" ]] || s1=inactive
   s2=$(systemctl is-active lane3-xudp-router.service 2>/dev/null || true); [[ -n "$s2" ]] || s2=inactive
   printf '%-22s | %s\n' 'Trust foreign' "$trust"
   printf '%-22s | %s\n' 'Mieru foreign' "$mieru"
   printf '%-22s | %s\n' 'Naive foreign' "$l3"
   printf '%-22s | %s\n' 'Naive in :7990 pool' "$pool"
-  printf '%-22s | %s\n' 'Naive client' "$s1"
-  printf '%-22s | %s\n' 'Naive XUDP router' "$s2"
+  printf '%-22s | %s\n' 'Lane 3 Naive client' "$s1"
+  printf '%-22s | %s\n' 'Lane 3 XUDP router' "$s2"
 }
 
 validate_bundle(){
@@ -123,9 +124,7 @@ EOF2
   systemctl daemon-reload
 }
 
-dispatcher_has_naive(){
-  [[ -s "$L3_DISPATCHER" ]] || return 1
-  grep -Eq '^[[:space:]]*-[[:space:]]+name:[[:space:]]+XUDP-NAIVE[[:space:]]*
+first_import(){
   [[ ! -s "$L3_ROOT/bundle.json" ]] || { echo 'Lane 3 already configured; use Replace Lane 3 foreign.'; return 0; }
   l3_free_tcp "$L3_NAIVE_PORT" || l3_die "TCP/$L3_NAIVE_PORT already in use"
   l3_free_tcp "$L3_ENTRY_PORT" || l3_die "TCP/$L3_ENTRY_PORT already in use"
@@ -144,7 +143,7 @@ dispatcher_has_naive(){
   systemctl enable --now lane3-naive-client.service lane3-xudp-router.service >/dev/null
   sleep 4
   if "$HEALTH" --full naive; then
-    set_pool enable
+    "$POOL" enable
     echo; echo 'SUCCESS: Naive imported and joined the unified Trust/Mieru/Naive pool on :7990.'
   else
     systemctl disable --now lane3-xudp-router.service lane3-naive-client.service >/dev/null 2>&1 || true
@@ -205,7 +204,7 @@ REMOTE
   install -m 0600 "$tmp" "$L3_ROOT/bundle.json"
   systemctl restart lane3-naive-client.service
   sleep 4
-  "$HEALTH" || rollback 1
+  "$HEALTH" --full naive || rollback 1
   trap - ERR INT TERM
   rm -f "$tmp"
   l3_log "SUCCESS: Lane 3 foreign replaced $old -> $new"
@@ -235,8 +234,8 @@ while true; do
   case "$c" in
     1) if [[ -s "$L3_ROOT/bundle.json" ]]; then replace_foreign; else first_import; fi ;;
     2) "$HEALTH" --full all || true ;;
-    3) set_pool enable ;;
-    4) set_pool disable ;;
+    3) "$POOL" enable ;;
+    4) "$POOL" disable ;;
     5) restart_naive ;;
     6) show_logs ;;
     0) exit 0 ;;
