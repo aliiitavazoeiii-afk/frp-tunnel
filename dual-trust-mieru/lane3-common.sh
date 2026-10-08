@@ -7,8 +7,11 @@ L3_BIN=/usr/local/lib/dual-trust-mieru
 L3_NAIVE_PORT=7995
 L3_ENTRY_PORT=7996
 L3_PREFIX='L3-'
-L3_BRANCH='maya3-multilane-naive'
+L3_BRANCH='triple-carrier-naive'
 L3_REPO='https://github.com/aliiitavazoeiii-afk/frp-tunnel.git'
+L3_DISPATCHER=/etc/dual-trust-mieru/iran/dispatcher.yaml
+L3_DISPATCHER_DATA=/etc/dual-trust-mieru/iran/dispatcher-data
+L3_MIHOMO=/usr/local/lib/dual-trust-mieru/mihomo
 
 l3_log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 l3_die(){ echo "ERROR: $*" >&2; exit 1; }
