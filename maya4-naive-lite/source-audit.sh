@@ -26,7 +26,7 @@ grep -q "'outboundTag':'maya4-naive'" attach-xui.sh
 grep -q 'PRAGMA table_info(inbounds)' attach-xui.sh
 grep -q '3X-UI public inbound tag' attach-xui.sh
 grep -q 'X-UI TEMPLATE ROUTING OK' attach-xui.sh
-grep -q 'v2.9.4-generated-default' attach-xui.sh
+grep -q 'v2.9.4-generated-sanitized' attach-xui.sh
 grep -q "INSERT INTO settings(key,value) VALUES('xrayTemplateConfig',?)" attach-xui.sh
 grep -q 'XUI_TEMPLATE_FILE=/usr/local/x-ui/bin/config.json' attach-xui.sh
 grep -q 'ROLLBACK: restoring previous x-ui database' attach-xui.sh
@@ -61,3 +61,8 @@ grep -q "settings':{'servers':\[{'address':'127.0.0.1','port':7996}\]}" attach-x
 ! grep -q "'targetStrategy':'AsIs'" attach-xui.sh
 ! grep -q "'ruleTag':'maya4-naive-all'" attach-xui.sh
 grep -q 'Xray public :443 did not return' attach-xui.sh
+
+grep -q "cfg\['inbounds'\]=api_inbounds" attach-xui.sh
+grep -q 'template still contains DB/user inbounds' attach-xui.sh
+grep -q 'persisted template inbounds are not api-only' attach-xui.sh
+grep -q 'existing tag found' attach-xui.sh
