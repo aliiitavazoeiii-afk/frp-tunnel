@@ -19,6 +19,7 @@ install -m 0644 "$B/lane3-common.sh" "$LIB/lane3-common.sh"
 install -m 0755 "$B/lane3-health.sh" /usr/local/sbin/lane3-health
 install -m 0755 "$B/lane3-manager.sh" /usr/local/sbin/lane3-manager
 install -m 0755 "$B/dual-health.sh" /usr/local/sbin/dual-health
+install -m 0755 "$B/dual-manager.sh" /usr/local/sbin/dual-manager
 install -m 0755 "$B/dual-autoheal.sh" /usr/local/sbin/dual-tunnel-autoheal
 install -m 0755 "$B/dual-cli.sh" /usr/local/bin/dual
 if [[ -d /usr/local/lib/dual-trust-mieru-manager ]]; then
