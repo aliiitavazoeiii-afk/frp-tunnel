@@ -20,6 +20,9 @@ grep -q 'XUI_LOG_LEVEL=warning' install-iran.sh
 grep -q 'MemoryHigh=96M' install-iran.sh
 grep -q 'MemoryHigh=160M' install-iran.sh
 grep -q 'maya4-naive-all' attach-xui.sh
+grep -q 'PRAGMA table_info(inbounds)' attach-xui.sh
+grep -q '3X-UI public inbound tag' attach-xui.sh
+grep -q 'X-UI TEMPLATE ROUTING OK' attach-xui.sh
 grep -q 'ROLLBACK: restoring previous x-ui database' attach-xui.sh
 grep -q 'Naive direct :7995' health.sh
 grep -q 'Naive full   :7996' health.sh
