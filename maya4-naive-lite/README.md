@@ -26,7 +26,7 @@ Iran services:
 
 The Naive client and the dedicated XUDP router have systemd memory guardrails. The installer also creates a 1 GiB swapfile only when the host has less than 256 MiB of swap.
 
-3X-UI uses its default SQLite database. Logging is set to `warning`, and its independent tunnel auto-restart monitor is left disabled.
+Maya4 is pinned to **3X-UI v2.9.4 exactly**. The Iran installer never installs "latest" and never upgrades or downgrades an existing panel implicitly. It verifies the installed panel binary reports version 2.9.4 before continuing.
 
 ## 1. Foreign server
 
@@ -72,7 +72,7 @@ bash install-iran.sh
 
 Enter the foreign IPv4. The installer connects over SSH and fetches the private bundle itself.
 
-If 3X-UI is not present, the installer uses the upstream MHSanaei 3X-UI stable installer in non-interactive mode. The upstream installer verifies its release archive checksum.
+If 3X-UI is not present, the installer downloads the upstream installer from the **v2.9.4 tag** and invokes it explicitly for **v2.9.4**. If another 3X-UI version is already installed, Maya4 aborts without changing it.
 
 ## 3. Create the public inbound
 
