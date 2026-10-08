@@ -60,9 +60,33 @@ heal_carrier(){
   set_count "$f" 1; log "$name still unhealthy after carrier restart"; return 1
 }
 
-trust_ok=0; mieru_ok=0
+trust_ok=0; mieru_ok=0; naive_ok=0
 heal_carrier trust 7993 dual-trust-client.service && trust_ok=1 || true
 heal_carrier mieru 7994 dual-mieru-carrier.service && mieru_ok=1 || true
+if [[ -s /etc/dual-trust-mieru/lane3/bundle.json ]]; then
+  heal_carrier naive 7995 lane3-naive-client.service && naive_ok=1 || true
+
+  # Naive owns a dedicated XUDP router, so a UDP-only Naive failure must never
+  # restart the shared Trust/Mieru bridge.
+  nf="$STATE/naive-xudp.failcount"
+  if (( naive_ok )); then
+    if probe_udp 7996; then
+      set_count "$nf" 0
+    else
+      n=$(get_count "$nf"); n=$((n+1)); set_count "$nf" "$n"
+      log "naive UDP/XUDP degraded cycle=$n/$BRIDGE_THRESHOLD"
+      if (( n >= BRIDGE_THRESHOLD )); then
+        log 'naive UDP/XUDP repeatedly failed; restarting only lane3-xudp-router.service'
+        systemctl restart lane3-xudp-router.service; sleep 3
+        if probe_udp 7996; then
+          set_count "$nf" 0; log 'naive UDP/XUDP recovered'
+        else
+          set_count "$nf" 1; log 'naive UDP/XUDP still degraded'
+        fi
+      fi
+    fi
+  fi
+fi
 
 # TCP on 7991/7992 is intentionally direct-carrier traffic. It is NOT an XUDP test.
 # Therefore only UDP probes are allowed to influence XUDP/bridge diagnosis.
