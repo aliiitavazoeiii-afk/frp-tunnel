@@ -12,6 +12,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null
 apt-get install -y --no-install-recommends ca-certificates curl jq python3 openssh-client git xz-utils tar >/dev/null
 
+echo 'Running unified triple source audit before installation...'
+bash "$B/lane3-source-audit.sh"
+
 LIB=/usr/local/lib/dual-trust-mieru-lane3
 mkdir -p "$LIB" /etc/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3/backups
 chmod 0755 "$LIB"; chmod 0700 /etc/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3/backups
