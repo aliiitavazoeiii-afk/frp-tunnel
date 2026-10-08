@@ -4,8 +4,8 @@ set -Eeuo pipefail
 D=/etc/dual-trust-mieru/iran
 MODE=${1:---quick}
 ROLE_FILTER=${2:-all}
-[[ "$MODE" == --quick || "$MODE" == --full ]] || { echo "usage: dual-health [--quick|--full] [all|trust|mieru]" >&2; exit 2; }
-[[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == trust || "$ROLE_FILTER" == mieru ]] || { echo "invalid role" >&2; exit 2; }
+[[ "$MODE" == --quick || "$MODE" == --full ]] || { echo "usage: dual-health [--quick|--full] [all|trust|mieru|naive]" >&2; exit 2; }
+[[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == trust || "$ROLE_FILTER" == mieru || "$ROLE_FILTER" == naive ]] || { echo "invalid role" >&2; exit 2; }
 
 if [[ -t 1 ]]; then
   G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; C=$'\e[36m'; B=$'\e[1m'; N=$'\e[0m'
@@ -91,15 +91,26 @@ probe_udp_label(){
 
 role_ip(){ local f=$1; [[ -s "$f" ]] && jq -r '.public_ip // "unknown"' "$f" 2>/dev/null || echo unknown; }
 
-printf '%b%s%b\n' "$B$C" 'DUAL MIERU TRUST TUNNEL — HEALTH' "$N"
+L3=/etc/dual-trust-mieru/lane3
+if [[ -s "$L3/bundle.json" ]]; then
+  printf '%b%s%b\n' "$B$C" 'TRIPLE TRUST / MIERU / NAIVE TUNNEL — HEALTH' "$N"
+else
+  printf '%b%s%b\n' "$B$C" 'DUAL MIERU TRUST TUNNEL — HEALTH' "$N"
+fi
 if [[ -s "$D/trust-bundle.json" ]]; then printf 'Trust foreign : %s\n' "$(role_ip "$D/trust-bundle.json")"; fi
 if [[ -s "$D/mieru-bundle.json" ]]; then printf 'Mieru foreign : %s\n' "$(role_ip "$D/mieru-bundle.json")"; fi
+if [[ -s "$L3/bundle.json" ]]; then printf 'Naive foreign : %s\n' "$(role_ip "$L3/bundle.json")"; fi
 
 echo
 printf '%bServices%b\n' "$B" "$N"
 for s in dual-trust-client dual-mieru-carrier dual-xudp-bridge dual-dispatcher x-ui; do
   if systemctl is-active --quiet "$s.service" 2>/dev/null; then ok "$s"; else bad "$s"; fi
 done
+if [[ -s "$L3/bundle.json" ]]; then
+  for s in lane3-naive-client lane3-xudp-router; do
+    if systemctl is-active --quiet "$s.service" 2>/dev/null; then ok "$s"; else bad "$s"; fi
+  done
+fi
 
 echo
 printf '%bPaths%b\n' "$B" "$N"
@@ -116,10 +127,21 @@ if [[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == mieru ]]; then
   probe_telegram 'Mieru path   :7992' 7992 3 || fail=1
   if [[ "$MODE" == --full ]]; then probe_udp_label 'Mieru path   :7992' 7992 2 || fail=1; fi
 fi
+if [[ "$ROLE_FILTER" == all || "$ROLE_FILTER" == naive ]]; then
+  if [[ -s "$L3/bundle.json" ]]; then
+    probe_http_label 'Naive direct :7995' 7995 || fail=1
+    probe_http_label 'Naive TCP    :7996' 7996 || fail=1
+    probe_telegram 'Naive path   :7996' 7996 3 || fail=1
+    if [[ "$MODE" == --full ]]; then probe_udp_label 'Naive path   :7996' 7996 2 || fail=1; fi
+  elif [[ "$ROLE_FILTER" == naive ]]; then
+    bad 'Naive role is not configured'
+    fail=1
+  fi
+fi
 if [[ "$ROLE_FILTER" == all ]]; then
-  probe_http_label 'Dual entry   :7990' 7990 || fail=1
-  probe_telegram 'Dual entry   :7990' 7990 3 || fail=1
-  if [[ "$MODE" == --full ]]; then probe_udp_label 'Dual entry   :7990' 7990 2 || fail=1; fi
+  probe_http_label 'Unified entry:7990' 7990 || fail=1
+  probe_telegram 'Unified entry:7990' 7990 3 || fail=1
+  if [[ "$MODE" == --full ]]; then probe_udp_label 'Unified entry:7990' 7990 2 || fail=1; fi
 fi
 
 exit "$fail"
