@@ -1,166 +1,194 @@
-# Maya3 Multi-Lane — Legacy + Lane 3 Naive
+# Unified Triple Carrier — Trust + Mieru + Naive
 
-Branch: `maya3-multilane-naive`  
-Lane 3 version: `1.0.0`
+Branch: `triple-carrier-naive`  
+Triple extension version: `1.1.0`  
+Production base: Trust/Mieru `v1.1.7`
 
-## Existing production remains intact
+## Architecture
 
-Legacy users continue to use the current public x-ui VLESS/REALITY inbound on TCP/443.
-
-```
-Maya3 :443
-  -> x-ui
-  -> dual-tunnel SOCKS 127.0.0.1:7990
-  -> existing Trust + Mieru
-```
-
-Lane 3 is added in parallel:
+The existing public x-ui inbound stays unchanged:
 
 ```
-Maya3 :443
-  -> x-ui user routing
-  -> lane3-naive SOCKS 127.0.0.1:7996
-       TCP -> Naive SOCKS 127.0.0.1:7995 -> new foreign
-       UDP -> XUDP over Naive -> new foreign
+Users
+  -> Maya3 / x-ui / VLESS REALITY :443
+  -> SOCKS dispatcher 127.0.0.1:7990
+       -> Trust full path :7991
+       -> Mieru full path :7992
+       -> Naive full path :7996
 ```
 
-The user-facing protocol and port do not change: users still receive VLESS/REALITY on Maya3:443.
+Direct carrier ports:
 
-## Foreign install
+- Trust direct: `7993`
+- Mieru direct: `7994`
+- Naive direct: `7995`
 
-Before installation, point a dedicated A record (for example a Lane 3-specific subdomain) to the new foreign VPS.
+Naive full path `7996` uses TCP directly through Naive and UDP through its own XUDP router.
+
+The dispatcher remains:
+
+```yaml
+strategy: sticky-sessions
+interval: 120
+lazy: true
+max-failed-times: 2
+```
+
+All three carriers are members of the same health-aware load-balance group. If one becomes unhealthy, new/reconnected flows are selected from the remaining healthy members. Existing TCP sessions cannot migrate between carriers mid-connection.
+
+## Safety properties
+
+- x-ui database and routing are not modified by Triple installation.
+- Trust, Mieru and the shared Trust/Mieru XUDP bridge are not restarted when Naive is imported.
+- Joining/leaving Naive changes only the dispatcher config and restarts only `dual-dispatcher.service`.
+- Dispatcher changes are backed up, validated with Mihomo, and rolled back if the post-check fails.
+- Naive has its own carrier and XUDP router services.
+- Naive auto-heal never restarts the shared Trust/Mieru bridge.
+- Foreign replacement preserves the Naive XUDP UUID.
+- Old foreign VPS instances are not deleted automatically.
+
+## Foreign Naive installation
+
+Create a dedicated DNS-only A record pointing to the third foreign VPS.
+
+Then:
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git && \
-sudo rm -rf /opt/frp-tunnel && \
-sudo git clone --depth 1 --branch maya3-multilane-naive --single-branch \
-  https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel && \
-cd /opt/frp-tunnel/dual-trust-mieru && \
-sudo bash install-foreign-lane3-naive.sh
+apt-get update && apt-get install -y git ca-certificates
+rm -rf /opt/frp-tunnel
+git clone --depth 1 --branch triple-carrier-naive --single-branch \
+  https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel
+cd /opt/frp-tunnel/dual-trust-mieru
+bash install-foreign-lane3-naive.sh
 ```
 
 Inputs:
-- public IPv4
+
+- foreign public IPv4
 - dedicated Naive domain
 - Let's Encrypt email
 
-Successful output includes:
-`Client bundle: /root/lane3-naive-client.json`
+Success creates:
 
-Never paste or commit that bundle.
-
-## Install the helper on Maya3
-
-```bash
-cd /root && \
-sudo rm -rf /opt/frp-tunnel && \
-sudo git clone --depth 1 --branch maya3-multilane-naive --single-branch \
-  https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel && \
-cd /opt/frp-tunnel/dual-trust-mieru && \
-echo "LANE3_VERSION=$(cat LANE3_VERSION)" && \
-sudo bash install-iran-lane3-helper.sh
+```
+/root/lane3-naive-client.json
 ```
 
-This helper installation does not modify x-ui routing and does not restart legacy tunnel services.
+Do not paste or commit that bundle.
 
-Open the panel:
+## Maya3 helper installation
+
+On the existing Iran/Maya3 production server:
+
+```bash
+rm -rf /opt/frp-tunnel
+git clone --depth 1 --branch triple-carrier-naive --single-branch \
+  https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel
+cd /opt/frp-tunnel/dual-trust-mieru
+bash install-iran-lane3-helper.sh
+```
+
+The helper runs the source audit before installation and updates the unified health/manager/autoheal tools without changing x-ui routing.
+
+Open the main manager:
+
+```bash
+dual status
+```
+
+Naive management is available from option 10, or directly:
 
 ```bash
 lane3
 ```
 
-## First foreign import
+Choose option 1 to import the first Naive foreign. The manager:
 
-Use panel option:
+1. fetches the private bundle over SSH;
+2. installs the Naive client on `7995`;
+3. installs the Naive TCP/XUDP full path on `7996`;
+4. runs full Naive health;
+5. only after health passes, adds `XUDP-NAIVE` to the existing `:7990` dispatcher pool.
 
-`1) Import first Lane 3 foreign server`
+## Unified health
 
-Enter the new foreign IPv4. The helper downloads the private bundle over SSH, installs Naive locally on 7995, installs the split TCP/XUDP router on 7996, and runs health checks.
+```bash
+dual health --full all
+```
 
-No users are moved by the import.
+Expected sections include:
 
-## Routing modes
+```
+Trust foreign : ...
+Mieru foreign : ...
+Naive foreign : ...
 
-### Split mode
+Trust direct :7993
+Trust path   :7991
 
-Use:
+Mieru direct :7994
+Mieru path   :7992
 
-`3) SPLIT mode`
+Naive direct :7995
+Naive path   :7996
 
-Effective rules:
-- email beginning with `L3-` -> Lane 3
-- explicitly assigned email -> Lane 3
-- every other user -> Legacy Trust/Mieru
+Unified entry :7990
+```
 
-### All users to Lane 3
+Role-specific Naive health:
 
-Use:
+```bash
+dual health --full naive
+```
 
-`6) Route ALL users -> Lane 3`
+## Emergency removal of Naive from user traffic
 
-### All users to Legacy
+This does not stop Trust or Mieru:
 
-Use:
+```bash
+lane3
+```
 
-`7) Route ALL users -> Legacy`
+Choose:
 
-This is also the emergency rollback route.
+```
+4) Disable Naive from unified :7990 pool
+```
 
-## New user workflow
+The dispatcher is backed up and validated before restart. All new/reconnected traffic then uses Trust and Mieru only.
 
-Create the client in the same existing x-ui inbound used by current users:
-- protocol: VLESS
-- security: REALITY
-- public port: 443
-- server/address: same Maya3 address used today
-- email/name: start with `L3-`, for example `L3-shop-001`
+To return Naive:
 
-Do not create a second public inbound.
+```
+3) Enable Naive in unified :7990 pool
+```
 
-When routing mode is `split`, the new user's server-side email automatically sends that user's traffic to Lane 3. The client UUID/config is otherwise normal and uses the same Maya3:443 entry point.
+Enable is refused unless Naive quick health passes.
 
-## Move an existing user without changing the client config
+## Failover behavior
 
-Use option:
+With all three healthy:
 
-`4) Assign existing user -> Lane 3`
+```
+:7990 -> Trust / Mieru / Naive
+```
 
-Enter the exact x-ui client email. The helper adds the email to its routing assignment list. It does not change the UUID or subscription.
+If Trust fails:
 
-To return the user:
+```
+:7990 -> Mieru / Naive
+```
 
-`5) Return assigned user -> Legacy`
+If Mieru fails:
 
-## Replace Lane 3 foreign
+```
+:7990 -> Trust / Naive
+```
 
-After the first import, panel option 1 automatically becomes:
+If Naive fails:
 
-`Replace Lane 3 foreign server`
+```
+:7990 -> Trust / Mieru
+```
 
-Point the existing Lane 3 domain A record to the new foreign IP first. The helper:
-1. connects to the new foreign;
-2. preserves the existing Lane 3 XUDP UUID;
-3. installs the new foreign from this branch;
-4. downloads the new credentials;
-5. restarts only the local Lane 3 Naive carrier;
-6. runs full Lane 3 health;
-7. rolls back to the previous foreign on failure.
-
-The old foreign is not deleted automatically.
-
-## Ports
-
-- 7990 existing Dual entry (unchanged)
-- 7991 existing Trust path (unchanged)
-- 7992 existing Mieru path (unchanged)
-- 7993 existing Trust direct (unchanged)
-- 7994 existing Mieru direct (unchanged)
-- 7995 Lane 3 Naive direct
-- 7996 Lane 3 full TCP/XUDP entry
-
-## Safety
-
-- Legacy carrier services are not restarted by Lane 3 install/replace.
-- x-ui is restarted only when a routing mode/user assignment is applied.
-- x-ui DB is backed up before each routing change and automatically restored if validation fails.
-- Lane 3 replacement preserves its XUDP UUID and keeps the old foreign available for rollback.
+When the failed carrier becomes healthy again, new flows become eligible for it again. Sticky sessions are retained to reduce related application sessions exiting through different IPs.
