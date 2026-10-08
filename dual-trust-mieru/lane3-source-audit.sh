@@ -20,6 +20,9 @@ grep -q 'L3_ENTRY_PORT=7996' lane3-common.sh
 grep -q 'probe_resistance' install-foreign-lane3-naive.sh
 grep -q 'xudp-lane3.internal' install-foreign-lane3-naive.sh
 grep -q 'kind":"lane3-naive' install-foreign-lane3-naive.sh
+grep -q "3) Naive foreign" dual-install-foreign.sh
+grep -q "ROLE=naive" dual-install-foreign.sh
+grep -q 'install-foreign-lane3-naive.sh' dual-install-foreign.sh
 grep -q 'POOL=/usr/local/sbin/lane3-pool' lane3-manager.sh
 grep -q 'joined the unified Trust/Mieru/Naive pool' lane3-manager.sh
 grep -q 'XUDP-NAIVE' lane3-pool.py
