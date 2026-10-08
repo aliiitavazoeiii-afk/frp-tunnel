@@ -17,8 +17,8 @@ banner(){
   clear 2>/dev/null || true
   printf '%b' "$C$B"
   echo '============================================================'
-  echo '          MAYA3 MULTI-LANE TUNNEL MANAGER'
-  echo '             Legacy + Lane 3 Naive'
+  echo '          MAYA3 UNIFIED TRIPLE TUNNEL MANAGER'
+  echo '             Trust + Mieru + Naive'
   echo '                 power by ali tavazoei'
   echo '============================================================'
   printf '%b' "$N"
@@ -36,8 +36,8 @@ status(){
   printf '%-22s | %s\n' 'Mieru foreign' "$mieru"
   printf '%-22s | %s\n' 'Naive foreign' "$l3"
   printf '%-22s | %s\n' 'Naive in :7990 pool' "$pool"
-  printf '%-22s | %s\n' 'Lane 3 Naive client' "$s1"
-  printf '%-22s | %s\n' 'Lane 3 XUDP router' "$s2"
+  printf '%-22s | %s\n' 'Naive client' "$s1"
+  printf '%-22s | %s\n' 'Naive XUDP router' "$s2"
 }
 
 validate_bundle(){
