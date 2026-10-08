@@ -22,7 +22,7 @@ grep -q '/usr/local/x-ui/x-ui -v' install-iran.sh
 ! grep -q 'MHSanaei/3x-ui/master/install.sh' install-iran.sh
 grep -q 'MemoryHigh=96M' install-iran.sh
 grep -q 'MemoryHigh=160M' install-iran.sh
-grep -q 'maya4-naive-all' attach-xui.sh
+grep -q "'outboundTag':'maya4-naive'" attach-xui.sh
 grep -q 'PRAGMA table_info(inbounds)' attach-xui.sh
 grep -q '3X-UI public inbound tag' attach-xui.sh
 grep -q 'X-UI TEMPLATE ROUTING OK' attach-xui.sh
@@ -54,3 +54,10 @@ if grep -Eq 'probe_resistance|traffic-pattern|HANDSHAKE_|anti_dpi' "${runtime_fi
 fi
 
 echo 'SUCCESS: Maya4 Naive Lite assertions passed'
+
+grep -q "XUI_XRAY=.*xray-linux-" attach-xui.sh
+grep -q 'run -test -c "$candidate"' attach-xui.sh
+grep -q "settings':{'servers':\[{'address':'127.0.0.1','port':7996}\]}" attach-xui.sh
+! grep -q "'targetStrategy':'AsIs'" attach-xui.sh
+! grep -q "'ruleTag':'maya4-naive-all'" attach-xui.sh
+grep -q 'Xray public :443 did not return' attach-xui.sh
