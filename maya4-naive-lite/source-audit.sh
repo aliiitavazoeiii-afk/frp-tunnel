@@ -29,13 +29,14 @@ grep -q 'maya4-xudp.service' install-foreign.sh
 grep -q 'xudp-maya4.internal' install-foreign.sh
 
 # Maya4 is deliberately single-carrier: no dispatcher, Mihomo, Trust or Mieru.
-if grep -Eq 'dual-dispatcher|mihomo|dual-trust|dual-mieru|sticky-sessions' ./*.sh; then
+runtime_files=(common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh)
+if grep -Eq 'dual-dispatcher|mihomo|dual-trust|dual-mieru|sticky-sessions' "${runtime_files[@]}"; then
   echo 'ERROR: Maya4 lite unexpectedly contains dual/triple carrier components' >&2
   exit 1
 fi
 
 # No specialized anti-detection/probing-resistance knobs in this profile.
-if grep -Eq 'probe_resistance|traffic-pattern|HANDSHAKE_|anti_dpi' ./*.sh; then
+if grep -Eq 'probe_resistance|traffic-pattern|HANDSHAKE_|anti_dpi' "${runtime_files[@]}"; then
   echo 'ERROR: Maya4 lite must remain a standard transport profile' >&2
   exit 1
 fi
