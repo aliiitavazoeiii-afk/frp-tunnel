@@ -15,8 +15,11 @@ grep -q 'ENTRY_PORT=7996' common.sh
 grep -q 'maya4-naive-client.service' install-iran.sh
 grep -q 'maya4-xudp-router.service' install-iran.sh
 grep -q 'Maya4 foreign IPv4' install-iran.sh
-grep -q 'XUI_NONINTERACTIVE=1' install-iran.sh
-grep -q 'XUI_LOG_LEVEL=warning' install-iran.sh
+grep -q "XUI_REQUIRED_VERSION='2.9.4'" install-iran.sh
+grep -q 'MHSanaei/3x-ui/v2.9.4/install.sh' install-iran.sh
+grep -q 'bash "$tmp" v2.9.4' install-iran.sh
+grep -q '/usr/local/x-ui/x-ui -v' install-iran.sh
+! grep -q 'MHSanaei/3x-ui/master/install.sh' install-iran.sh
 grep -q 'MemoryHigh=96M' install-iran.sh
 grep -q 'MemoryHigh=160M' install-iran.sh
 grep -q 'maya4-naive-all' attach-xui.sh
