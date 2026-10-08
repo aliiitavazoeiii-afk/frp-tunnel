@@ -17,14 +17,15 @@ mkdir -p "$LIB" /etc/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3/back
 chmod 0755 "$LIB"; chmod 0700 /etc/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3 /var/lib/dual-trust-mieru/lane3/backups
 install -m 0644 "$B/lane3-common.sh" "$LIB/lane3-common.sh"
 install -m 0755 "$B/lane3-health.sh" /usr/local/sbin/lane3-health
-install -m 0755 "$B/lane3-xui-route.sh" /usr/local/sbin/lane3-xui-route
 install -m 0755 "$B/lane3-manager.sh" /usr/local/sbin/lane3-manager
+install -m 0755 "$B/dual-health.sh" /usr/local/sbin/dual-health
+install -m 0755 "$B/dual-autoheal.sh" /usr/local/sbin/dual-tunnel-autoheal
+install -m 0755 "$B/dual-cli.sh" /usr/local/bin/dual
+if [[ -d /usr/local/lib/dual-trust-mieru-manager ]]; then
+  install -m 0755 "$B/dual-autoheal.sh" /usr/local/lib/dual-trust-mieru-manager/dual-autoheal.sh
+fi
 printf '#!/usr/bin/env bash\nexec /usr/local/sbin/lane3-manager "$@"\n' > /usr/local/bin/lane3
 chmod 0755 /usr/local/bin/lane3
-
-[[ -s /etc/dual-trust-mieru/lane3/routing-mode ]] || echo all-legacy > /etc/dual-trust-mieru/lane3/routing-mode
-touch /etc/dual-trust-mieru/lane3/assigned-users.txt
-chmod 0600 /etc/dual-trust-mieru/lane3/routing-mode /etc/dual-trust-mieru/lane3/assigned-users.txt
 
 if [[ ! -s /etc/dual-trust-mieru/lane3/bundle.json ]]; then
   for p in 7995 7996; do
@@ -36,10 +37,12 @@ if [[ ! -s /etc/dual-trust-mieru/lane3/bundle.json ]]; then
 fi
 
 echo '============================================================'
-echo '       MAYA3 MULTI-LANE HELPER INSTALLED'
+echo '       MAYA3 UNIFIED TRIPLE HELPER INSTALLED'
 echo '============================================================'
 echo "Lane 3 version: $(cat "$B/LANE3_VERSION")"
-echo 'Legacy Trust/Mieru services were NOT restarted or modified.'
-echo 'x-ui routing was NOT changed.'
+echo 'Trust/Mieru carriers and shared bridge were NOT restarted or modified.'
+echo 'x-ui routing/DB was NOT changed.'
+echo 'Naive joins the same :7990 health-aware pool only after its full health passes.'
 echo
-echo 'Open panel with: lane3'
+echo 'Open Naive carrier panel with: lane3'
+echo 'Unified health: dual health --full all'
