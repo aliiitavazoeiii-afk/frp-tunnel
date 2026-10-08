@@ -1,0 +1,14 @@
+name: maya4-naive-lite-audit
+on:
+  push:
+    branches: [maya4-naive-lite]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Maya4 Naive Lite source audit
+        run: |
+          cd maya4-naive-lite
+          bash source-audit.sh
