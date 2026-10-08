@@ -41,7 +41,10 @@ grep -q 'was NOT deleted automatically' dual-manager.sh
 grep -q 'lane3-pool.py.*lane3-pool' install-iran-lane3-helper.sh
 grep -q 'migrate-xui-split-to-unified.sh.*migrate-xui-split-to-unified' install-iran-lane3-helper.sh
 grep -q 'triple-unified-entry' migrate-xui-split-to-unified.sh
-grep -q 'ROLLBACK: restoring previous x-ui database' migrate-xui-split-to-unified.sh
+grep -q 'ROLLBACK: restoring previous x-ui database and dispatcher' migrate-xui-split-to-unified.sh
+grep -q 'Enabling Naive in unified :7990 pool while x-ui is stopped' migrate-xui-split-to-unified.sh
+grep -q 'Waiting for real user reconnects before post-migration health' migrate-xui-split-to-unified.sh
+grep -q 'cp -a "$bk/dispatcher.yaml" "$DISPATCHER"' migrate-xui-split-to-unified.sh
 grep -q 'lane3-xui-route.legacy-disabled' migrate-xui-split-to-unified.sh
 
 if grep -Eq '/etc/x-ui|x-ui\.db|xrayTemplateConfig|lane3-xui-route' install-iran-lane3-helper.sh lane3-manager.sh lane3-pool.py; then
