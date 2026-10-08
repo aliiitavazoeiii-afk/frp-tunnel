@@ -26,6 +26,9 @@ grep -q 'Naive full   :7996' health.sh
 grep -q 'UDP/XUDP :7996' health.sh
 grep -q 'maya4-naive-endpoint.service' install-foreign.sh
 grep -q 'maya4-xudp.service' install-foreign.sh
+grep -q 'RESUME_EXISTING=1' install-foreign.sh
+grep -q 'Any HTTP status is acceptable here' install-foreign.sh
+! grep -q 'curl -fsS.*resolve.*DOMAIN:443' install-foreign.sh
 grep -q 'xudp-maya4.internal' install-foreign.sh
 
 # Maya4 is deliberately single-carrier: no dispatcher, Mihomo, Trust or Mieru.
