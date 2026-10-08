@@ -25,34 +25,28 @@ if (( swap_kb < 262144 )); then
   grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# Install 3X-UI only when absent. Upstream installer verifies release checksums.
-if ! command -v x-ui >/dev/null 2>&1 || ! systemctl list-unit-files x-ui.service >/dev/null 2>&1; then
-  log 'Installing stable 3X-UI in non-interactive mode'
+XUI_REQUIRED_VERSION='2.9.4'
+
+# Maya4 is pinned to 3X-UI v2.9.4. Never install "latest" and never upgrade
+# an existing panel implicitly.
+if ! [[ -x /usr/local/x-ui/x-ui ]] || ! systemctl list-unit-files x-ui.service >/dev/null 2>&1; then
+  log '3X-UI not found; installing exact pinned version v2.9.4'
   tmp=$(mktemp)
   curl -fsSL --retry 4 --connect-timeout 10 --max-time 60 \
-    https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh -o "$tmp"
+    https://raw.githubusercontent.com/MHSanaei/3x-ui/v2.9.4/install.sh -o "$tmp"
   chmod 0700 "$tmp"
-  XUI_NONINTERACTIVE=1 bash "$tmp"
+  bash "$tmp" v2.9.4
   rm -f "$tmp"
 fi
 
+XUI_ACTUAL_VERSION=$(/usr/local/x-ui/x-ui -v 2>/dev/null | tr -d '[:space:]')
+XUI_ACTUAL_VERSION=${XUI_ACTUAL_VERSION#v}
+[[ "$XUI_ACTUAL_VERSION" == "$XUI_REQUIRED_VERSION" ]] || \
+  die "Maya4 requires 3X-UI v$XUI_REQUIRED_VERSION exactly; found: ${XUI_ACTUAL_VERSION:-unknown}. No upgrade/downgrade was performed."
+
 systemctl enable --now x-ui.service >/dev/null
 systemctl is-active --quiet x-ui.service || die 'x-ui failed to start'
-
-# Keep logging modest on the small VPS. Do not enable the panel's own tunnel
-# auto-restart monitor; Maya4 has an explicit health command instead.
-mkdir -p /etc/default
-touch /etc/default/x-ui
-if grep -q '^XUI_LOG_LEVEL=' /etc/default/x-ui; then
-  sed -i 's/^XUI_LOG_LEVEL=.*/XUI_LOG_LEVEL=warning/' /etc/default/x-ui
-else
-  echo 'XUI_LOG_LEVEL=warning' >> /etc/default/x-ui
-fi
-if grep -q '^XUI_TUNNEL_HEALTH_MONITOR=' /etc/default/x-ui; then
-  sed -i 's/^XUI_TUNNEL_HEALTH_MONITOR=.*/XUI_TUNNEL_HEALTH_MONITOR=false/' /etc/default/x-ui
-else
-  echo 'XUI_TUNNEL_HEALTH_MONITOR=false' >> /etc/default/x-ui
-fi
+log "3X-UI version locked: v$XUI_ACTUAL_VERSION (installer will not upgrade it)"
 
 SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new)
 log 'Fetching private Maya4 bundle from foreign server'
