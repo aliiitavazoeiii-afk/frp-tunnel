@@ -21,6 +21,7 @@ chmod 0755 "$LIB"; chmod 0700 /etc/dual-trust-mieru/lane3 /var/lib/dual-trust-mi
 install -m 0644 "$B/lane3-common.sh" "$LIB/lane3-common.sh"
 install -m 0755 "$B/lane3-health.sh" /usr/local/sbin/lane3-health
 install -m 0755 "$B/lane3-pool.py" /usr/local/sbin/lane3-pool
+install -m 0755 "$B/migrate-xui-split-to-unified.sh" /usr/local/sbin/migrate-xui-split-to-unified
 install -m 0755 "$B/lane3-manager.sh" /usr/local/sbin/lane3-manager
 install -m 0755 "$B/dual-health.sh" /usr/local/sbin/dual-health
 install -m 0755 "$B/dual-manager.sh" /usr/local/sbin/dual-manager
