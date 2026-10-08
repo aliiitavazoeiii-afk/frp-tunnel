@@ -5,8 +5,7 @@ source "$LIB/lane3-common.sh"
 l3_root
 l3_mkdirs
 
-ROUTE=/usr/local/sbin/lane3-xui-route
-HEALTH=/usr/local/sbin/lane3-health
+HEALTH=/usr/local/sbin/dual-health
 SSH_OPTS=(-o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPersist=600 -o ControlPath=/run/lane3-ssh-%C)
 
 if [[ -t 1 ]]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; C=$'\e[36m'; B=$'\e[1m'; N=$'\e[0m'; else G='';R='';Y='';C='';B='';N=''; fi
@@ -25,19 +24,19 @@ banner(){
 }
 
 status(){
-  local trust='-' mieru='-' l3='not configured' mode='all-legacy' s1='inactive' s2='inactive'
+  local trust='-' mieru='-' l3='not configured' pool='DISABLED' s1='inactive' s2='inactive'
   [[ -s /etc/dual-trust-mieru/iran/trust-bundle.json ]] && trust=$(jq -r '.public_ip // "-"' /etc/dual-trust-mieru/iran/trust-bundle.json)
   [[ -s /etc/dual-trust-mieru/iran/mieru-bundle.json ]] && mieru=$(jq -r '.public_ip // "-"' /etc/dual-trust-mieru/iran/mieru-bundle.json)
   [[ -s "$L3_ROOT/bundle.json" ]] && l3=$(jq -r '.public_ip // "unknown"' "$L3_ROOT/bundle.json")
-  [[ -s "$L3_ROOT/routing-mode" ]] && mode=$(<"$L3_ROOT/routing-mode")
+  dispatcher_has_naive && pool='ENABLED' || true
   s1=$(systemctl is-active lane3-naive-client.service 2>/dev/null || true); [[ -n "$s1" ]] || s1=inactive
   s2=$(systemctl is-active lane3-xudp-router.service 2>/dev/null || true); [[ -n "$s2" ]] || s2=inactive
-  printf '%-22s | %s\n' 'Legacy Trust foreign' "$trust"
-  printf '%-22s | %s\n' 'Legacy Mieru foreign' "$mieru"
-  printf '%-22s | %s\n' 'Lane 3 Naive foreign' "$l3"
-  printf '%-22s | %s\n' 'Routing mode' "$mode"
-  printf '%-22s | %s\n' 'Lane 3 Naive client' "$s1"
-  printf '%-22s | %s\n' 'Lane 3 XUDP router' "$s2"
+  printf '%-22s | %s\n' 'Trust foreign' "$trust"
+  printf '%-22s | %s\n' 'Mieru foreign' "$mieru"
+  printf '%-22s | %s\n' 'Naive foreign' "$l3"
+  printf '%-22s | %s\n' 'Naive in :7990 pool' "$pool"
+  printf '%-22s | %s\n' 'Naive client' "$s1"
+  printf '%-22s | %s\n' 'Naive XUDP router' "$s2"
 }
 
 validate_bundle(){
@@ -124,7 +123,9 @@ EOF2
   systemctl daemon-reload
 }
 
-first_import(){
+dispatcher_has_naive(){
+  [[ -s "$L3_DISPATCHER" ]] || return 1
+  grep -Eq '^[[:space:]]*-[[:space:]]+name:[[:space:]]+XUDP-NAIVE[[:space:]]*
   [[ ! -s "$L3_ROOT/bundle.json" ]] || { echo 'Lane 3 already configured; use Replace Lane 3 foreign.'; return 0; }
   l3_free_tcp "$L3_NAIVE_PORT" || l3_die "TCP/$L3_NAIVE_PORT already in use"
   l3_free_tcp "$L3_ENTRY_PORT" || l3_die "TCP/$L3_ENTRY_PORT already in use"
@@ -142,8 +143,9 @@ first_import(){
   install -m 0600 "$tmp" "$L3_ROOT/bundle.json"; rm -f "$tmp"
   systemctl enable --now lane3-naive-client.service lane3-xudp-router.service >/dev/null
   sleep 4
-  if "$HEALTH"; then
-    echo; echo 'SUCCESS: Lane 3 imported. Existing Trust/Mieru and x-ui routing were untouched.'
+  if "$HEALTH" --full naive; then
+    set_pool enable
+    echo; echo 'SUCCESS: Naive imported and joined the unified Trust/Mieru/Naive pool on :7990.'
   else
     systemctl disable --now lane3-xudp-router.service lane3-naive-client.service >/dev/null 2>&1 || true
     rm -f "$L3_ROOT/bundle.json"
@@ -210,44 +212,33 @@ REMOTE
   l3_log "Old foreign was NOT deleted automatically. Backup: $bk"
 }
 
-assign(){
-  local email
-  read -r -p 'Exact x-ui user email to route via Lane 3: ' email
-  "$ROUTE" assign "$email"
-}
-unassign(){
-  local email
-  read -r -p 'Exact x-ui user email to return to Legacy: ' email
-  "$ROUTE" unassign "$email"
+restart_naive(){
+  systemctl restart lane3-naive-client.service
+  sleep 3
+  "$HEALTH" --quick naive || true
 }
 show_logs(){
-  journalctl -u lane3-naive-client.service -u lane3-xudp-router.service --since '-30 min' --no-pager | grep -Ei 'error|warn|timeout|reset|failed' | tail -n 120 || true
+  journalctl -u lane3-naive-client.service -u lane3-xudp-router.service -u dual-dispatcher.service --since '-30 min' --no-pager | grep -Ei 'error|warn|timeout|reset|failed' | tail -n 120 || true
 }
 
 while true; do
   banner; status; echo
-  if [[ -s "$L3_ROOT/bundle.json" ]]; then echo '  1) Replace Lane 3 foreign server'; else echo '  1) Import first Lane 3 foreign server'; fi
-  echo '  2) Full Lane 3 health check'
-  echo '  3) SPLIT mode: L3-* + assigned users -> Lane 3'
-  echo '  4) Assign existing user -> Lane 3'
-  echo '  5) Return assigned user -> Legacy'
-  echo '  6) Route ALL users -> Lane 3'
-  echo '  7) Route ALL users -> Legacy'
-  echo '  8) List users and effective route'
-  echo '  9) Recent Lane 3 warnings/errors'
+  if [[ -s "$L3_ROOT/bundle.json" ]]; then echo '  1) Replace Naive foreign server'; else echo '  1) Import first Naive foreign server'; fi
+  echo '  2) Full unified health: Trust + Mieru + Naive'
+  echo '  3) Enable Naive in unified :7990 pool'
+  echo '  4) Disable Naive from unified :7990 pool'
+  echo '  5) Restart Naive carrier only'
+  echo '  6) Recent Naive / dispatcher warnings'
   echo '  0) Exit'
   echo
   read -r -p 'Select: ' c; echo
   case "$c" in
     1) if [[ -s "$L3_ROOT/bundle.json" ]]; then replace_foreign; else first_import; fi ;;
-    2) "$HEALTH" || true ;;
-    3) "$ROUTE" apply split ;;
-    4) assign ;;
-    5) unassign ;;
-    6) "$ROUTE" apply all-lane3 ;;
-    7) "$ROUTE" apply all-legacy ;;
-    8) "$ROUTE" list ;;
-    9) show_logs ;;
+    2) "$HEALTH" --full all || true ;;
+    3) set_pool enable ;;
+    4) set_pool disable ;;
+    5) restart_naive ;;
+    6) show_logs ;;
     0) exit 0 ;;
     *) echo 'Invalid selection.' ;;
   esac
