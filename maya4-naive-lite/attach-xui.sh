@@ -101,9 +101,18 @@ try:
         # persisted customization.
         with open(template_file) as f:
             cfg=json.load(f)
-        template_source='v2.9.4-generated-default'
-        if not any(i.get('tag')=='api' for i in cfg.get('inbounds',[])):
-            raise RuntimeError('fallback Xray template has no api inbound')
+
+        # In 3X-UI v2.9.4 bin/config.json is the generated effective config,
+        # not a pristine template. It already contains DB-backed user inbounds.
+        # Persisting it verbatim would make GetXrayConfig append those same DB
+        # inbounds again and Xray would fail with "existing tag found".
+        generated_inbounds=cfg.get('inbounds',[]) or []
+        api_inbounds=[i for i in generated_inbounds if i.get('tag')=='api']
+        if len(api_inbounds)!=1:
+            raise RuntimeError(f'fallback generated config must contain exactly one api inbound, found {len(api_inbounds)}')
+        cfg['inbounds']=api_inbounds
+
+        template_source='v2.9.4-generated-sanitized'
         if not any(o.get('tag')=='direct' for o in cfg.get('outbounds',[])):
             raise RuntimeError('fallback Xray template has no direct outbound')
 
@@ -136,6 +145,11 @@ try:
       'outboundTag':'maya4-naive'
     }
     routing['rules']=[api,managed]+rest
+    template_inbounds=cfg.get('inbounds',[]) or []
+    non_api=[i.get('tag') for i in template_inbounds if i.get('tag')!='api']
+    if non_api:
+        raise RuntimeError(f'template still contains DB/user inbounds: {non_api}')
+
     payload=json.dumps(cfg,separators=(',',':'))
     candidate=os.environ.get('XUI_CANDIDATE')
     if candidate:
@@ -170,8 +184,8 @@ if ! ss -H -ltn 'sport = :443' 2>/dev/null | grep -q .; then
   rollback 1
 fi
 
-# Validate the persisted template because modern 3X-UI generates real inbounds
-# dynamically from SQLite; the on-disk config.json does not contain them.
+# Validate the persisted template. 3X-UI v2.9.4 appends enabled DB inbounds
+# dynamically; therefore the stored template must contain only the API inbound.
 XUI_DB="$XUI_DB" PUBLIC_TAG="$tag" python3 <<'PY'
 import json,os,sqlite3
 p=os.environ['XUI_DB']; tag=os.environ['PUBLIC_TAG']
@@ -182,6 +196,10 @@ try:
     c=json.loads(row[0])
 finally:
     con.close()
+
+template_inbounds=c.get('inbounds',[]) or []
+if [i.get('tag') for i in template_inbounds] != ['api']:
+    raise SystemExit(f'persisted template inbounds are not api-only: {[i.get("tag") for i in template_inbounds]}')
 
 obs=[o for o in c.get('outbounds',[]) if o.get('tag')=='maya4-naive']
 if len(obs)!=1:
