@@ -26,7 +26,7 @@ done
 
 banner(){
   echo '============================================================'
-  echo '              DUAL MIERU TRUST TUNNEL'
+  echo '        TRIPLE TRUST MIERU NAIVE FOREIGN INSTALLER'
   echo '                 power by ali tavazoei'
   echo '============================================================'
 }
@@ -42,10 +42,29 @@ valid_ipv4(){
 if [[ -z "$ROLE" && $NONINTERACTIVE -eq 0 ]]; then
   echo '1) Trust foreign'
   echo '2) Mieru foreign'
-  read -r -p 'Select role [1/2]: ' x
-  case "$x" in 1) ROLE=trust;; 2) ROLE=mieru;; *) die 'invalid role';; esac
+  echo '3) Naive foreign'
+  read -r -p 'Select role [1/2/3]: ' x
+  case "$x" in
+    1) ROLE=trust ;;
+    2) ROLE=mieru ;;
+    3) ROLE=naive ;;
+    *) die 'invalid role' ;;
+  esac
 fi
-[[ "$ROLE" == trust || "$ROLE" == mieru ]] || die 'role must be trust or mieru'
+[[ "$ROLE" == trust || "$ROLE" == mieru || "$ROLE" == naive ]] || die 'role must be trust, mieru, or naive'
+
+# Naive has its own HTTPS/ACME + XUDP endpoint installer. Delegate early so
+# Trust/Mieru production behavior below remains unchanged.
+if [[ "$ROLE" == naive ]]; then
+  stage naive-delegate
+  args=()
+  [[ -n "$PUBLIC_IP" ]] && args+=(--public-ip "$PUBLIC_IP")
+  [[ -n "$DOMAIN" ]] && args+=(--domain "$DOMAIN")
+  [[ -n "$EMAIL" ]] && args+=(--email "$EMAIL")
+  [[ -n "$UUID_FILE" ]] && args+=(--xudp-uuid-file "$UUID_FILE")
+  (( NONINTERACTIVE == 1 )) && args+=(--non-interactive)
+  exec bash "$B/install-foreign-lane3-naive.sh" "${args[@]}"
+fi
 
 if [[ -z "$PUBLIC_IP" && $NONINTERACTIVE -eq 0 ]]; then read -r -p 'Public IPv4: ' PUBLIC_IP; fi
 valid_ipv4 "$PUBLIC_IP" || die 'valid IPv4 required'
