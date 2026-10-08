@@ -26,6 +26,9 @@ grep -q 'maya4-naive-all' attach-xui.sh
 grep -q 'PRAGMA table_info(inbounds)' attach-xui.sh
 grep -q '3X-UI public inbound tag' attach-xui.sh
 grep -q 'X-UI TEMPLATE ROUTING OK' attach-xui.sh
+grep -q 'v2.9.4-generated-default' attach-xui.sh
+grep -q "INSERT INTO settings(key,value) VALUES('xrayTemplateConfig',?)" attach-xui.sh
+grep -q 'XUI_TEMPLATE_FILE=/usr/local/x-ui/bin/config.json' attach-xui.sh
 grep -q 'ROLLBACK: restoring previous x-ui database' attach-xui.sh
 grep -q 'Naive direct :7995' health.sh
 grep -q 'Naive full   :7996' health.sh
