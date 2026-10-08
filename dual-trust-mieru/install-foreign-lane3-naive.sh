@@ -128,6 +128,11 @@ cat > "$D/Caddyfile" <<EOF2
     hide_ip
     hide_via
     probe_resistance
+    # The XUDP backend intentionally lives on loopback. forwardproxy's
+    # default ACL denies 127.0.0.0/8, so allow this trusted hostname first.
+    acl {
+      allow xudp-lane3.internal
+    }
   }
   root * /var/www/lane3-naive
   file_server
