@@ -4,7 +4,7 @@ B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$B"
 
 echo '=== Maya4 Naive Lite source audit ==='
-for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh replace-foreign.sh; do
+for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh replace-foreign.sh enable-replace-command.sh; do
   printf '%-28s ' "$f"
   bash -n "$f"
   echo OK
