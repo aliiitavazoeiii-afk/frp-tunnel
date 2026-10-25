@@ -4,7 +4,7 @@ B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$B"
 
 echo '=== Maya4 Naive Lite source audit ==='
-for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh; do
+for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh replace-foreign.sh; do
   printf '%-28s ' "$f"
   bash -n "$f"
   echo OK
@@ -50,6 +50,19 @@ fi
 # No specialized anti-detection/probing-resistance knobs in this profile.
 if grep -Eq 'probe_resistance|traffic-pattern|HANDSHAKE_|anti_dpi' "${runtime_files[@]}"; then
   echo 'ERROR: Maya4 lite must remain a standard transport profile' >&2
+  exit 1
+fi
+
+# Replacement helper MUST remain separate from the fresh installer.
+grep -q 'trap finish EXIT' replace-foreign.sh
+grep -q "http_test 17995 'candidate direct'" replace-foreign.sh
+grep -q "http_test 17996 'candidate full'" replace-foreign.sh
+grep -q 'udp_test 17996' replace-foreign.sh
+grep -q 'CUTOVER=1' replace-foreign.sh
+grep -q 'cp -a "$BK/naive.json" "$D/naive.json"' replace-foreign.sh
+grep -q 'cp -a "$BK/xudp-router.json" "$D/xudp-router.json"' replace-foreign.sh
+if grep -qE 'systemctl (stop|restart|disable) x-ui' replace-foreign.sh; then
+  echo 'ERROR: foreign replacement must never stop/restart x-ui' >&2
   exit 1
 fi
 
