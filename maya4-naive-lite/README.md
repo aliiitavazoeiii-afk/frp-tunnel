@@ -143,3 +143,67 @@ This does not restart x-ui.
 
 - public `443/tcp`: Naive HTTPS endpoint
 - `2443/tcp`: XUDP backend bound to loopback only
+
+
+## Safe foreign replacement (existing Maya4 Iran + x-ui v2.9.4)
+
+**Never rerun install-iran.sh or maya4 attach for a routine foreign swap.**
+This branch has a dedicated swap helper. Existing public x-ui :443 and client
+configurations remain untouched. A one-carrier swap momentarily disconnects
+existing transport sockets; users reconnect automatically if their clients
+support it. The old VPS is NOT deleted automatically.
+
+1. Before changing the old foreign, provision a **new DNS-only hostname**
+   pointing to the NEW foreign IPv4. Keep old foreign hostname/DNS untouched.
+   A new hostname lets Caddy issue the NEW TLS certificate independently.
+2. On a fresh NEW foreign VPS (no existing services on TCP/443):
+
+   ```bash
+   apt-get update && apt-get install -y git
+   git clone --depth 1 --branch maya4-naive-lite --single-branch \
+     https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel
+   cd /opt/frp-tunnel/maya4-naive-lite
+   sudo bash install-foreign.sh
+   ```
+
+   Enter new public IPv4, new DNS-only hostname and LE email. Installation
+   generates private /root/maya4-naive-client.json on the foreign. Do not
+   share or commit that bundle.
+
+3. On the existing Maya4 Iran (the checkout must be a clean
+   maya4-naive-lite branch):
+
+   ```bash
+   cd /opt/frp-tunnel
+   git pull --ff-only
+   sudo bash maya4-naive-lite/enable-replace-command.sh
+   ```
+
+4. From Maya4 Iran, first validate the new foreign host's SSH fingerprint
+   out of band; establish verified known_hosts trust manually. Then securely
+   fetch the foreign bundle:
+
+   ```bash
+   sudo scp -o StrictHostKeyChecking=yes \
+     root@NEW_FOREIGN_IP:/root/maya4-naive-client.json \
+     /root/new-maya4-naive-client.json
+   sudo chmod 0600 /root/new-maya4-naive-client.json
+   ```
+
+5. Test candidate Naive TCP and XUDP on isolated local ports, then switch
+   only the Maya4 transport services if all candidate tests pass:
+
+   ```bash
+   sudo maya4 replace /root/new-maya4-naive-client.json
+   sudo maya4 health
+   ```
+
+The CLI replacement preserves version-pinned x-ui 2.9.4, its DB and inbound.
+Candidate test ports 17995/17996 are bound to localhost. The helper retains
+old configuration at /var/lib/maya4-naive/backups/ and automatically attempts
+config rollback if live validation fails. Only the local Maya4 Naive client
+and XUDP router are restarted at cutover; x-ui is NOT restarted.
+
+It does NOT kill or delete the old foreign VPS. Keep the old server online until
+real end-user behavior and rollback are verified. If SSH host verification fails,
+STOP and investigate, never disable host key checks to force replacement.
