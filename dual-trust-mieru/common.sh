@@ -7,9 +7,9 @@ STATE_DIR=/var/lib/$PROJECT
 BIN_DIR=/usr/local/lib/$PROJECT
 BACKUP_DIR=$STATE_DIR/backups
 
-# v26.9.9 is currently marked pre-release upstream. Keep the latest non-pre-release
-# 26.9.x build for this production candidate until a newer stable Xray is published.
-XRAY_VERSION=v26.9.8
+# Pin Xray to a published non-prerelease with SHA256 from the official GitHub release.
+# Verify archive digest on every download; never silently fall back to another version.
+XRAY_VERSION=v26.10.21
 MIHOMO_VERSION=v1.19.31
 TRUST_ENDPOINT_VERSION=v1.0.33
 TRUST_CLIENT_VERSION=v1.0.49
@@ -57,11 +57,11 @@ install_xray(){
   case "$arch" in
     amd64)
       url="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip"
-      sha="a8c6d5b53957600d7e18d16e697201a4c942fe823307deb039bf8f40587aa556"
+      sha="0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
       ;;
     arm64)
       url="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-arm64-v8a.zip"
-      sha="6721edb5b80e046536abc8235bd0977a2c69ade88ad42c01c0df368beba070dc"
+      sha="d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
       ;;
   esac
   bin="$BIN_DIR/xray-${XRAY_VERSION}"
