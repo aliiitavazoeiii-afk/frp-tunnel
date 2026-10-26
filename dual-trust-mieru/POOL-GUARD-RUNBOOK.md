@@ -14,7 +14,7 @@ Base: `trust-mieru-dual` at `133be735d21a112fc0af842227fd4b07ade08818`.
 
 ## Components
 
-- `dual-pool-guard.py`: forced-path HTTP 204 and Telegram HTTPS probes via SOCKS 7991 (Trust) and 7992 (Mieru). Explicit `observe` (default) and `auto` modes. In auto, a failed role needs a second confirmatory round and a healthy peer. If both are failing, never remove the last route.
+- `dual-pool-guard.py`: forced-path HTTP 204, Telegram HTTPS and validated SOCKS UDP ASSOCIATE / XUDP DNS-reply probes via SOCKS 7991 (Trust) and 7992 (Mieru). Explicit `observe` (default) and `auto` modes. In auto, a failed role needs a second confirmatory round and a healthy peer. If both are failing, never remove the last route. **UDP-only failure currently quarantines the entire role**, including its healthy TCP flows, because this Dual load-balancer has no per-protocol pool membership.
 - Live pool change: construct a minimal membership-only YAML edit, run Mihomo `-t`, back up the whole prior file, use local authenticated `PUT /configs` (without `force=true`), verify `GET /proxies/DUAL` actual members, atomically persist. On error, request rollback of prior in-memory config. No x-ui or dispatcher restart.
 - Recovery after >=600 seconds dwell and >=3 consecutive healthy check cycles. A restored path returns at normal load-balance weight; **weighted 10% probation is not implemented**.
 - `dual-autoheal.sh`: avoids restarting local carrier for a role already quarantined by the guard. Its old behavior is untouched until auto mode is approved and installed.
