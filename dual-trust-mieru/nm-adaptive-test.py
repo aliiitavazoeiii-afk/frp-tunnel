@@ -53,8 +53,8 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(weights, {"NAIVE": 0.0, "MIERU": 1.0})
         self.assertEqual(reason, "NAIVE_UNHEALTHY")
         self.assertEqual(model.policy({}, {"NAIVE": True, "MIERU": True}, 20)[1], "WARMUP")
-        roll.add(701, {"NAIVE": 2, "MIERU": 3})
-        self.assertEqual(roll.totals(701)["NAIVE"], 2)
+        roll.add(901, {"NAIVE": 2, "MIERU": 3})
+        self.assertEqual(roll.totals(901)["NAIVE"], 2)
 
     def test_smooth_chooser(self):
         c = model.SmoothChooser()
