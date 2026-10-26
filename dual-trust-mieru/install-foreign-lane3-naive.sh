@@ -121,6 +121,9 @@ grep -qE '^[[:space:]]*127\.0\.0\.1[[:space:]]+xudp-trust\.internal([[:space:]]|
 
 cat > "$D/Caddyfile" <<EOF2
 {
+  # Disable localhost admin API because the authenticated XUDP legacy role
+  # must be permitted to dial 127.0.0.1:2443 via the forward proxy.
+  admin off
   order forward_proxy before file_server
   log {
     exclude http.log.error
