@@ -10,6 +10,9 @@ import fcntl
 import json
 import os
 import re
+import secrets
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -51,13 +54,74 @@ def http_probe(port, url, allowed):
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False, None
 
+def udp_probe(port):
+    """Validate a SOCKS5 UDP ASSOCIATE DNS reply ID via the selected full path."""
+    def receive(sock, n):
+        value = b''
+        while len(value) < n:
+            data = sock.recv(n - len(value))
+            if not data:
+                raise OSError('SOCKS TCP closed')
+            value += data
+        return value
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=4) as conn:
+            conn.settimeout(5)
+            conn.sendall(b'\x05\x01\x00')
+            if receive(conn, 2) != b'\x05\x00':
+                return False
+            conn.sendall(b'\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00')
+            header = receive(conn, 4)
+            if header[1] != 0:
+                return False
+            if header[3] == 1:
+                relay = socket.inet_ntoa(receive(conn, 4))
+            elif header[3] == 3:
+                relay = receive(conn, receive(conn, 1)[0]).decode('ascii')
+            elif header[3] == 4:
+                relay = socket.inet_ntop(socket.AF_INET6, receive(conn, 16))
+            else:
+                return False
+            relay_port = struct.unpack('!H', receive(conn, 2))[0]
+            if relay in ('0.0.0.0', '::'):
+                relay = '127.0.0.1'
+            query_id = secrets.randbelow(65536)
+            dns = (struct.pack('!HHHHHH', query_id, 0x0100, 1, 0, 0, 0)
+                   + b'\x07youtube\x03com\x00' + struct.pack('!HH', 1, 1))
+            packet = (b'\x00\x00\x00\x01' + socket.inet_aton('1.1.1.1')
+                      + struct.pack('!H', 53) + dns)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                udp.settimeout(5)
+                udp.sendto(packet, (relay, relay_port))
+                response, _ = udp.recvfrom(4096)
+                if len(response) < 14 or response[:3] != b'\x00\x00\x00':
+                    return False
+                atyp = response[3]
+                offset = 4
+                if atyp == 1:
+                    offset += 4
+                elif atyp == 3:
+                    offset += 1 + response[offset]
+                elif atyp == 4:
+                    offset += 16
+                else:
+                    return False
+                offset += 2
+                if len(response) < offset + 12:
+                    return False
+                rid, flags = struct.unpack('!HH', response[offset:offset+4])
+                return rid == query_id and bool(flags & 0x8000)
+    except (OSError, ValueError, IndexError, UnicodeError):
+        return False
+
 def probe(role):
     _, port = ROLES[role]
     a, at = http_probe(port, 'https://www.gstatic.com/generate_204', {'204'})
     b, bt = http_probe(port, 'https://api.telegram.org/', {'200', '301', '302'})
-    # Telegram Bot API HTTPS is a synthetic reachability signal, not MTProto.
-    return {'ok': bool(a and b), 'web': a, 'telegram_https': b,
-            'web_seconds': at, 'telegram_seconds': bt}
+    c = udp_probe(port)
+    # Telegram Bot API HTTPS and DNS/XUDP are synthetic, not live Telegram MTProto.
+    return {'ok': bool(a and b and c), 'web': a, 'telegram_https': b,
+            'udp_xudp': c, 'web_seconds': at, 'telegram_seconds': bt}
 
 def full_probe(role):
     p = probe(role)
@@ -210,7 +274,8 @@ def execute(mode):
         v = tests[role]
         say(role + ': ' + ('OK' if v['ok'] else 'DEGRADED') +
             ' web=' + str(v['web_seconds']) + 's telegram=' +
-            str(v['telegram_seconds']) + 's confirmed_bad=' + str(v['confirmed_bad']))
+            str(v['telegram_seconds']) + 's udp_xudp=' +
+            str(v.get('udp_xudp', 'unknown')) + ' confirmed_bad=' + str(v['confirmed_bad']))
     if mode == 'observe':
         say('observe-only: no config, service, or state changes')
         return
