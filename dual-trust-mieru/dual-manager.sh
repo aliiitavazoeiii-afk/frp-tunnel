@@ -208,7 +208,7 @@ replace_role(){
   refresh_node_health "$role"
   if "$HEALTH" --full "$role"; then
     printf '%b%s replacement PASSED full role health.%b\n' "$G" "${role^^}" "$N"
-    cleanup_old_foreign "$role" "$old"
+    echo "Old $role foreign $old retained for real-user verification and manual retirement."
     echo 'New user connections are automatically eligible for load balancing now.'
   else
     printf '%b%s cutover is up but full post-check is degraded. Old foreign was NOT cleaned.%b\n' "$Y" "${role^^}" "$N"
