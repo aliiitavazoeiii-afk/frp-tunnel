@@ -134,6 +134,64 @@ class CanaryTest(unittest.IsolatedAsyncioTestCase):
             writer.close()
             await writer.wait_closed()
 
+    async def test_udp_associate_localhost_canary(self):
+        loop = asyncio.get_running_loop()
+        backend_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        backend_udp.setblocking(False)
+        backend_udp.bind(("127.0.0.1", 0))
+
+        async def echo_udp():
+            while True:
+                data, addr = await loop.sock_recvfrom(backend_udp, 65535)
+                await loop.sock_sendto(backend_udp, data, addr)
+
+        echo_task = asyncio.create_task(echo_udp())
+
+        async def fake_backend(reader, writer):
+            try:
+                self.assertEqual(await reader.readexactly(3), b"\x05\x01\x00")
+                writer.write(b"\x05\x00")
+                await writer.drain()
+                self.assertEqual(await reader.readexactly(10),
+                                 b"\x05\x03\x00\x01" + b"\x00"*6)
+                port_bytes = struct.pack("!H", backend_udp.getsockname()[1])
+                writer.write(b"\x05\x00\x00\x01\x7f\x00\x00\x01" + port_bytes)
+                await writer.drain()
+                await reader.read()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        try:
+            self.backend_server = await asyncio.start_server(fake_backend, "127.0.0.1", 0)
+            canary.UPSTREAM["NAIVE"] = ("127.0.0.1", self.backend_server.sockets[0].getsockname()[1])
+            self.server = await asyncio.start_server(canary.handle, "127.0.0.1", 0)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", self.server.sockets[0].getsockname()[1])
+            try:
+                writer.write(b"\x05\x01\x00")
+                await writer.drain()
+                self.assertEqual(await reader.readexactly(2), b"\x05\x00")
+                writer.write(b"\x05\x03\x00\x01" + b"\x00"*6)
+                await writer.drain()
+                response = await asyncio.wait_for(reader.readexactly(10), 3)
+                self.assertEqual(response[1], 0)
+                port = struct.unpack("!H", response[-2:])[0]
+                packet = b"\0\0\0\1" + socket.inet_aton("1.1.1.1") + struct.pack("!H", 53) + b"test-udp-packet"
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as cli_udp:
+                    cli_udp.bind(("127.0.0.1", 0))
+                    cli_udp.setblocking(False)
+                    await loop.sock_sendto(cli_udp, packet, ("127.0.0.1", port))
+                    response, _ = await asyncio.wait_for(loop.sock_recvfrom(cli_udp, 4096), 3)
+                    self.assertEqual(response, packet)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            echo_task.cancel()
+            await asyncio.gather(echo_task, return_exceptions=True)
+            backend_udp.close()
+
     async def test_fail_closed_on_stale_telemetry(self):
         canary.POLICY.write_text(json.dumps({
             "schema": 1, "timestamp": time.time()-100,
