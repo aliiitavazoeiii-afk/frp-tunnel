@@ -55,6 +55,34 @@ EOF
 chmod 0755 "$CLI"
 bash -n "$CLI"
 
+DUAL=/usr/local/bin/dual
+if [[ -e "$DUAL" && ! -e "$DUAL.before-maya4-dashboard" ]]; then
+  cp -a "$DUAL" "$DUAL.before-maya4-dashboard"
+fi
+cat > "$DUAL" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-status}" in
+  status) exec /usr/local/sbin/maya4-manager ;;
+  health) exec /usr/local/sbin/maya4-health ;;
+  restart)
+    systemctl restart maya4-naive-client.service maya4-xudp-router.service
+    sleep 3
+    exec /usr/local/sbin/maya4-health
+    ;;
+  replace)
+    shift
+    exec /usr/local/sbin/maya4-replace-auto "$@"
+    ;;
+  *)
+    echo 'usage: dual [status|health|restart|replace [NEW_IP]]' >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod 0755 "$DUAL"
+bash -n "$DUAL"
+
 echo 'SUCCESS: Maya4 dashboard installed.'
-echo 'Run: sudo maya4'
+echo 'Run: dual status'
 echo 'Dashboard option 1 asks only for the new foreign IPv4.'
