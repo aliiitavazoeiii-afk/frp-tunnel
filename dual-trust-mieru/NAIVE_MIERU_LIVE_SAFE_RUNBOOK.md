@@ -49,7 +49,14 @@ This starts ONLY `nm-naive-candidate` on 17993 and `nm-xudp-candidate` on 17991.
 
 ## IRAN cutover (only failed Trust client replaced)
 
-Only after `prepare` reports CANDIDATE PASS:
+After `prepare` reports CANDIDATE PASS, run a 20-request full-path Telegram canary via the unchanged isolated candidate (plus direct Naive and Mieru comparisons):
+
+```bash
+cd /opt/frp-tunnel-nm/dual-trust-mieru
+sudo bash nm-iran.sh soak
+```
+
+Any failed request blocks the migration; do not bypass the gate or remove its marker. With `SOAK PASS` recorded within 15 minutes, and provided neither candidate service has restarted, the cutover will also require strict 3/3 Telegram HTTPS and UDP readiness. Only then:
 
 ```bash
 cd /opt/frp-tunnel-nm/dual-trust-mieru
