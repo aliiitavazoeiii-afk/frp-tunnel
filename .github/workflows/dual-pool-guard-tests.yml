@@ -1,0 +1,18 @@
+name: Dual pool guard tests
+on:
+  push:
+    branches: [dual-adaptive-quarantine-v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m py_compile dual-trust-mieru/dual-pool-guard.py
+      - name: Offline regression tests
+        run: python3 -m unittest discover -s dual-trust-mieru/tests -p 'test_pool_guard.py' -v
+      - name: Shell syntax
+        run: bash -n dual-trust-mieru/dual-autoheal.sh dual-trust-mieru/dual-manager.sh
