@@ -90,6 +90,14 @@ def main():
     mode.add_argument('--rollback',action='store_true')
     args=parser.parse_args()
     if os.geteuid()!=0: raise RuntimeError('run as root')
+    if not args.rollback and CFG.read_text().count('    strategy: round-robin\n') == 1:
+        if args.plan:
+            print('CURRENT: round-robin is already configured; Naive (XUDP-TRUST alias) / Mieru')
+            print('ACTIVE CONNECTIONS:', active_sessions())
+            print('NO ACTION REQUIRED. No live config changed.')
+        else:
+            print('Already configured: round-robin; no reload performed')
+        return
     if args.rollback:
         if not SAVE.is_file(): raise RuntimeError('no saved configuration')
         candidate=SAVE.read_text()
