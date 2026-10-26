@@ -254,6 +254,7 @@ EOF
   systemctl stop nm-naive-candidate.service nm-xudp-candidate.service
   restore_alias_cli
   date -Is > "$STATE/live-cutover.timestamp"
+  log "Naive becomes eligible for new traffic after the unchanged dispatcher next successful health check."
   log 'SUCCESS: Naive active in legacy Trust socket :7993 / split :7991.'
   log 'Mieru, x-ui, dispatcher and shared XUDP bridge PIDs unchanged.'
   log 'POOL remains STICKY with legacy internal XUDP-TRUST alias until gated rebalance.'
