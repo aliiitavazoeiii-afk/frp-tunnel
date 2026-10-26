@@ -284,8 +284,12 @@ PrivateTmp=true
             previous_int=signal.signal(signal.SIGINT,interrupted)
             previous_term=signal.signal(signal.SIGTERM,interrupted)
             try:
-                shutil.copyfile(self.new_cfg,self.live_cfg)
-                self.live_cfg.chmod(0o600)
+                # Atomic replacement so a concurrent service restart cannot read
+                # a partially copied credential/configuration file.
+                stage_file=self.live_cfg.with_name("."+self.live_cfg.name+".nm-stage")
+                shutil.copyfile(self.new_cfg,stage_file)
+                stage_file.chmod(0o600)
+                os.replace(stage_file,self.live_cfg)
                 modified=True
                 print("[SWAP] Restarting ONLY "+self.live+"; existing "+self.role+" sessions will reconnect.")
                 run("systemctl","restart",self.live+".service")
@@ -304,7 +308,10 @@ PrivateTmp=true
             except BaseException:
                 if modified:
                     print("[SWAP] ROLLBACK previous "+self.role+" config",file=sys.stderr)
-                    shutil.copyfile(backup/self.live_cfg.name,self.live_cfg)
+                    stage_file=self.live_cfg.with_name("."+self.live_cfg.name+".nm-restore")
+                    shutil.copyfile(backup/self.live_cfg.name,stage_file)
+                    stage_file.chmod(0o600)
+                    os.replace(stage_file,self.live_cfg)
                     shutil.copyfile(backup/self.live_bundle.name,self.live_bundle)
                     try:run("systemctl","restart",self.live+".service")
                     except Exception:print("[SWAP] CRITICAL: rollback restart failed!",file=sys.stderr)
