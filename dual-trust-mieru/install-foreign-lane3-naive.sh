@@ -68,6 +68,7 @@ install_caddy_naive(){
   digest=$(jq -r '.assets[] | select(.name=="caddy-forwardproxy-naive.tar.xz") | (.digest // empty)' "$meta" | head -n1)
   rm -f "$meta"
   [[ -n "$tag" && -n "$url" && "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || die 'could not resolve verified Caddy Naive release'
+  [[ "$digest" == 'sha256:c273dc07dd79c5919f97639cbdcb559d40ce90475dbd8aac80641b0a8c8065ff' ]] || die 'Caddy Naive release digest mismatch; aborting'
   bin="$BIN_DIR/caddy-naive-$tag"
   if [[ ! -x "$bin" ]]; then
     tmp=$(mktemp -d); arc="$tmp/caddy.tar.xz"
