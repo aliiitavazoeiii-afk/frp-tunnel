@@ -71,6 +71,18 @@ class ModelTest(unittest.TestCase):
         roll.add(901, {"NAIVE": 2, "MIERU": 3})
         self.assertEqual(roll.totals(901)["NAIVE"], 2)
 
+    def test_shadow_disagreement_refuses_unverified_failover(self):
+        weights, reason = model.shadow_policy(
+            {"NAIVE": 10_000_000, "MIERU": 90_000_000},
+            {"NAIVE": False, "MIERU": True}, 600)
+        self.assertEqual(weights, {"NAIVE": 0.0, "MIERU": 0.0})
+        self.assertEqual(reason, "HEALTH_UNVERIFIED")
+        weights, reason = model.shadow_policy(
+            {"NAIVE": 10_000_000, "MIERU": 90_000_000},
+            {"NAIVE": True, "MIERU": True}, 600)
+        self.assertEqual(reason, "ADAPTIVE")
+        self.assertGreater(weights["NAIVE"], 0.5)
+
     def test_smooth_chooser(self):
         c = model.SmoothChooser()
         x = [c.choose({"NAIVE": 0.7, "MIERU": 0.3}) for _ in range(1000)]
