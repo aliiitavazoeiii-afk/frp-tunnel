@@ -19,7 +19,7 @@ status(){
   if grep -q '      - XUDP-NAIVE' "$D/dispatcher.yaml"; then
     echo 'Pool: native Naive/Mieru labels'
   else
-    echo 'Pool: compatibility alias for Naive; original dispatcher not reloaded'
+    echo 'Pool: compatibility alias XUDP-TRUST routes to Naive (the strategy above reflects the current saved config)'
   fi
   echo 'Commands: dual health --full all | dual status | dual balance-plan'
 }
