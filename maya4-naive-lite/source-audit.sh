@@ -12,6 +12,9 @@ done
 
 grep -q 'NAIVE_PORT=7995' common.sh
 grep -q 'ENTRY_PORT=7996' common.sh
+grep -q 'XRAY_VERSION=v26.10.21' common.sh
+grep -q '0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978' common.sh
+grep -q 'd1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c' common.sh
 grep -q 'maya4-naive-client.service' install-iran.sh
 grep -q 'maya4-xudp-router.service' install-iran.sh
 grep -q 'Maya4 foreign IPv4' install-iran.sh
