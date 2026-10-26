@@ -63,6 +63,7 @@ install_caddy_naive(){
   curl -fsSL --retry 4 --connect-timeout 10 --max-time 60 \
     https://api.github.com/repos/klzgrad/forwardproxy/releases/latest -o "$meta"
   tag=$(jq -r '.tag_name // empty' "$meta")
+  [[ "$tag" == 'v2.11.7-naive2' ]] || die 'unsafe/unreviewed Caddy Naive version; expect v2.11.7-naive2'
   url=$(jq -r '.assets[] | select(.name=="caddy-forwardproxy-naive.tar.xz") | .browser_download_url' "$meta" | head -n1)
   digest=$(jq -r '.assets[] | select(.name=="caddy-forwardproxy-naive.tar.xz") | (.digest // empty)' "$meta" | head -n1)
   rm -f "$meta"
@@ -112,6 +113,10 @@ EOF2
 
 grep -qE '^[[:space:]]*127\.0\.0\.1[[:space:]]+xudp-lane3\.internal([[:space:]]|$)' /etc/hosts || \
   echo '127.0.0.1 xudp-lane3.internal # lane3-naive-xudp' >> /etc/hosts
+# Compatibility for existing Iran XUDP bridge: reuse the Trust outbound without
+# ever restarting the live XUDP bridge or touching Mieru.
+grep -qE '^[[:space:]]*127\.0\.0\.1[[:space:]]+xudp-trust\.internal([[:space:]]|$)' /etc/hosts || \
+  echo '127.0.0.1 xudp-trust.internal # naive-mieru-xudp' >> /etc/hosts
 
 cat > "$D/Caddyfile" <<EOF2
 {
@@ -132,6 +137,7 @@ cat > "$D/Caddyfile" <<EOF2
     # default ACL denies 127.0.0.0/8, so allow this trusted hostname first.
     acl {
       allow xudp-lane3.internal
+      allow xudp-trust.internal
     }
   }
   root * /var/www/lane3-naive
