@@ -1,43 +1,60 @@
 #!/usr/bin/env bash
-# Adds 'maya4 replace /root/new-bundle.json' to installed Maya4 CLI.
-# Does not touch systemd, x-ui, subscriptions, firewall or transport configs.
+# Installs/upgrades the Maya4 dashboard and safe replacement helpers.
+# Does not restart or modify x-ui, subscriptions, firewall, or live tunnel configs.
 set -Eeuo pipefail
+
 [[ $(id -u) -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
+
+SRC=/opt/frp-tunnel/maya4-naive-lite
 CLI=/usr/local/bin/maya4
-SCRIPT=/opt/frp-tunnel/maya4-naive-lite/replace-foreign.sh
-[[ -x "$CLI" && -s "$SCRIPT" ]] || { echo "Maya4 CLI or replacement script missing" >&2; exit 1; }
-grep -Fq 'status|health) exec /usr/local/sbin/maya4-health ;;' "$CLI" ||
- { echo "Unknown Maya4 CLI layout; refusing to overwrite" >&2; exit 1; }
-grep -Fq 'attach) exec /usr/local/sbin/maya4-attach ;;' "$CLI" ||
- { echo "Maya4 attach action missing; refusing to overwrite" >&2; exit 1; }
-if grep -Fq 'replace) shift;' "$CLI"; then
- echo "Maya4 CLI already supports replace"
- exit 0
+LIB=/usr/local/lib/maya4-naive
+
+for f in manager.sh replace-foreign-auto.sh replace-foreign.sh health.sh attach-xui.sh; do
+  [[ -s "$SRC/$f" ]] || { echo "Missing source file: $SRC/$f" >&2; exit 1; }
+  bash -n "$SRC/$f"
+done
+
+mkdir -p "$LIB"
+chmod 0755 "$LIB"
+install -m 0755 "$SRC/manager.sh" /usr/local/sbin/maya4-manager
+install -m 0755 "$SRC/replace-foreign-auto.sh" /usr/local/sbin/maya4-replace-auto
+install -m 0755 "$SRC/replace-foreign.sh" "$LIB/replace-foreign.sh"
+install -m 0755 "$SRC/health.sh" /usr/local/sbin/maya4-health
+install -m 0755 "$SRC/attach-xui.sh" /usr/local/sbin/maya4-attach
+
+if [[ -e "$CLI" && ! -e "$CLI.before-dashboard" ]]; then
+  cp -a "$CLI" "$CLI.before-dashboard"
 fi
-python3 - "$CLI" <<'PY'
-from pathlib import Path
-import os,sys,tempfile
-p=Path(sys.argv[1])
-s=p.read_text()
-anchor='  restart)\n'
-if s.count(anchor)!=1:
-    raise SystemExit("Unknown Maya4 CLI syntax; unchanged")
-new=s.replace(anchor, '  replace) shift; exec /bin/bash /opt/frp-tunnel/maya4-naive-lite/replace-foreign.sh "$@" ;;\n'+anchor)
-fd,tmp=tempfile.mkstemp(prefix='.maya4-cli-',dir=str(p.parent))
-os.chmod(tmp,0o755)
-try:
-    with os.fdopen(fd,'w') as out: out.write(new)
-    import subprocess
-    result=subprocess.run(['/bin/bash','-n',tmp],check=False)
-    if result.returncode:
-        raise RuntimeError("CLI syntax validation failed")
-    import shutil
-    backup=p.with_name(p.name+'.before-replace')
-    if not backup.exists():
-        shutil.copy2(p,backup)
-    os.replace(tmp,p)
-except BaseException:
-    if os.path.exists(tmp): os.unlink(tmp)
-    raise
-PY
-echo 'SUCCESS: Maya4 manager now supports: sudo maya4 replace /root/new-maya4-naive-client.json'
+
+cat > "$CLI" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-dashboard}" in
+  dashboard|menu) exec /usr/local/sbin/maya4-manager ;;
+  status|health) exec /usr/local/sbin/maya4-health ;;
+  attach) exec /usr/local/sbin/maya4-attach ;;
+  replace)
+    shift
+    exec /usr/local/sbin/maya4-replace-auto "$@"
+    ;;
+  replace-bundle)
+    shift
+    exec /bin/bash /usr/local/lib/maya4-naive/replace-foreign.sh "$@"
+    ;;
+  restart)
+    systemctl restart maya4-naive-client.service maya4-xudp-router.service
+    sleep 3
+    exec /usr/local/sbin/maya4-health
+    ;;
+  *)
+    echo 'usage: maya4 [dashboard|health|attach|replace [NEW_IP]|replace-bundle BUNDLE|restart]' >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod 0755 "$CLI"
+bash -n "$CLI"
+
+echo 'SUCCESS: Maya4 dashboard installed.'
+echo 'Run: sudo maya4'
+echo 'Dashboard option 1 asks only for the new foreign IPv4.'
