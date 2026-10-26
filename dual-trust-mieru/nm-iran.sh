@@ -234,6 +234,7 @@ EOF
   systemctl stop dual-trust-client.service
   if ! systemctl start nm-naive-client.service; then
     systemctl start dual-trust-client.service || true
+    cp -a "$STATE/orig-autoheal" /usr/local/sbin/dual-tunnel-autoheal || true
     l3_die 'Naive could not start; Trust restored; Mieru untouched'
   fi
   sleep 3
@@ -241,6 +242,7 @@ EOF
     log 'ROLLBACK Naive port swap, restoring former Trust service'
     systemctl stop nm-naive-client.service || true
     systemctl start dual-trust-client.service || true
+    cp -a "$STATE/orig-autoheal" /usr/local/sbin/dual-tunnel-autoheal || true
     l3_die 'candidate was healthy but live path failed. Mieru untouched.'
   fi
   local after
