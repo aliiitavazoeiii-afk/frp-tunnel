@@ -45,10 +45,11 @@ full_health(){
     done
   done
   (( good >= 2 )) || { log "Telegram HTTPS synthetic FAILED ($good/3)"; return 1; }
+  local telegram_ok=$good
   good=0
   for i in 1 2 3; do l3_udp "$path" && good=$((good+1)) || true; done
   (( good >= 2 )) || { log "XUDP DNS FAILED ($good/3)"; return 1; }
-  log "HEALTH PASS direct:$direct path:$path Telegram:$good UDP/XUDP:$good"
+  log "HEALTH PASS direct:$direct path:$path Telegram:$telegram_ok UDP/XUDP:$good"
 }
 protected_pids(){
   for svc in x-ui dual-dispatcher dual-xudp-bridge dual-mieru-carrier; do
@@ -108,8 +109,32 @@ prepare(){
       l3_die "candidate port $port already occupied; check for previous candidate install"
     fi
   done
-  log 'Downloading SHA256-verified security-pinned NaiveProxy (may install prerequisite packages).'
-  l3_install_naive
+  log 'Downloading SHA256-verified, security-pinned NaiveProxy; no apt/package changes.'
+  local arch digest suffix tmp
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64|amd64) suffix=linux-x64; digest=80214dfea1767f6ecf63a3a79dc9f48b203460f51abc609357fff48dd5844c7d ;;
+    aarch64|arm64) suffix=linux-arm64; digest=8f4d917fa39a5d8cf1c17fc12ffd99ba84c015b62b43461d09cc074ca4114d8d ;;
+    *) l3_die "unsupported architecture: $arch" ;;
+  esac
+  local tag=v154.0.8037.49-5
+  local target="$BIN/naive-$tag"
+  if [[ ! -x "$target" ]]; then
+    for cmd in curl sha256sum tar xz; do command -v "$cmd" >/dev/null || l3_die "missing $cmd; install manually, cannot modify live packages"; done
+    tmp=$(mktemp -d /root/.nm-naive.XXXXXXXX)
+    curl -fL --retry 3 --connect-timeout 10 --max-time 180 \
+      "https://github.com/klzgrad/naiveproxy/releases/download/$tag/naiveproxy-$tag-$suffix.tar.xz" \
+      -o "$tmp/naive.tar.xz"
+    echo "$digest  $tmp/naive.tar.xz" | sha256sum -c - >/dev/null || l3_die 'SECURITY: NaiveProxy binary digest mismatch'
+    mkdir -p "$tmp/unpacked"
+    tar -xJf "$tmp/naive.tar.xz" -C "$tmp/unpacked"
+    local found
+    found=$(find "$tmp/unpacked" -type f -name naive | head -n 1)
+    [[ -n "$found" ]] || l3_die 'naive binary missing from verified archive'
+    install -m 0755 "$found" "$target"
+    rm -rf "$tmp"
+  fi
+  ln -sfn "$target" "$BIN/naive"
   [[ -x "$BIN/xray" ]] || l3_die 'live Xray binary unavailable'
   install -m 0600 "$src" "$BUNDLE"
   write_candidate "$BUNDLE"
