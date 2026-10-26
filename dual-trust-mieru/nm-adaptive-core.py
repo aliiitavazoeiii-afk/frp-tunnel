@@ -122,8 +122,8 @@ class SmoothChooser:
         if mieru == 0:
             return "NAIVE"
         self.credit += naive / (naive + mieru)
-        if self.credit >= 1:
-            self.credit -= 1
+        if self.credit >= 1 - 1e-9:
+            self.credit = max(0.0, self.credit - 1)
             return "NAIVE"
         return "MIERU"
 
