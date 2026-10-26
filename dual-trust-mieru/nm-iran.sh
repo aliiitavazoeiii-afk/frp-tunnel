@@ -22,7 +22,7 @@ require_live(){
   jq -e '
     any(.inbounds[]; .tag=="trust-in" and .port==7991) and
     any(.outbounds[]; .tag=="carrier-trust" and .settings.port==7993) and
-    any(.outbounds[]; .tag=="xudp-trust" and .settings.address=="xudp-trust.internal" and .settings.port==2443 and .streamSettings.sockopt.dialerProxy=="carrier-trust") and
+    any(.outbounds[]; .tag=="xudp-trust" and (.settings.address=="xudp-trust.internal" or .settings.address=="127.0.0.1") and .settings.port==2443 and .streamSettings.sockopt.dialerProxy=="carrier-trust") and
     any(.outbounds[]; .tag=="carrier-mieru" and .settings.port==7994)
   ' "$IR/xudp.json" >/dev/null || l3_die 'XUDP bridge is not the verified split architecture; refusing'
   grep -q '      - XUDP-TRUST' "$IR/dispatcher.yaml" || l3_die 'legacy dispatcher alias absent'
@@ -78,13 +78,19 @@ c={
 }
 (root/'naive-candidate.json').write_text(json.dumps(c,indent=2)+'\n')
 u=b['xudp_uuid']
+live=json.load(open('/etc/dual-trust-mieru/iran/xudp.json'))
+legacy=[z for z in live['outbounds'] if z.get('tag')=='xudp-trust']
+if len(legacy)!=1: raise RuntimeError('unrecognized legacy XUDP leg')
+target=legacy[0]['settings']['address']
+if target not in ('127.0.0.1','xudp-trust.internal'):
+ raise RuntimeError('unexpected legacy XUDP address: refusing to synthesize candidate')
 x={
  "log":{"loglevel":"warning"},
  "inbounds":[{"tag":"nm-candidate-in","listen":"127.0.0.1","port":17991,
               "protocol":"socks","settings":{"auth":"noauth","udp":True}}],
  "outbounds":[
    {"tag":"xudp-nm","protocol":"vless",
-    "settings":{"address":"xudp-trust.internal","port":2443,"id":u,"encryption":"none"},
+    "settings":{"address":target,"port":2443,"id":u,"encryption":"none"},
     "streamSettings":{"network":"raw","sockopt":{"dialerProxy":"nm-direct"}},
     "mux":{"enabled":True,"concurrency":-1,"xudpConcurrency":16,"xudpProxyUDP443":"allow"}},
    {"tag":"nm-direct","protocol":"socks","settings":{"address":"127.0.0.1","port":17993}}
