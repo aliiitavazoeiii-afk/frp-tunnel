@@ -57,7 +57,9 @@ class CounterSampler:
             if before and before[0] == role:
                 delta[role] += max(0, value - before[1])
             else:
-                delta[role] += value
+                # The accumulated counter predates first observation.
+                # Do not import unknown historic bytes into the live window.
+                # The next consecutive observation can safely contribute deltas.
                 new_counts[role] += 1
         self.previous = now
         return delta, new_counts, {r: sum(x[0] == r for x in now.values()) for r in ROLES}
@@ -164,11 +166,16 @@ def atomic_status(path, status):
 def display(status):
     data = status["bytes_10m"]
     total = data["NAIVE"] + data["MIERU"]
-    pct = 100 * data["NAIVE"] / total if total else 0.0
-    return (f"window={status['window_seconds']}s observed={total/1048576:.1f} MiB; "
-            f"Naive={pct:.1f}% Mieru={100-pct:.1f}% "
+    shares = (f"Naive={100*data['NAIVE']/total:.1f}% "
+              f"Mieru={100*data['MIERU']/total:.1f}%") if total else "Naive=N/A Mieru=N/A"
+    flags = status.get("controller_alive", status.get("healthy", {}))
+    health_line = (f"controller_alive=NAIVE:{flags.get('NAIVE', 'unknown')}"
+                   f",MIERU:{flags.get('MIERU', 'unknown')}")
+    return (f"window={status['window_seconds']}s coverage={status.get('coverage_seconds', 0)}s "
+            f"observed={total/1048576:.1f} MiB; {shares}; "
             f"next_connection_weights={status['weights']['NAIVE']:.0%}/"
-            f"{status['weights']['MIERU']:.0%}; {status['reason']}")
+            f"{status['weights']['MIERU']:.0%}; {status['reason']}; "
+            f"{health_line}")
 
 
 def main():
@@ -187,7 +194,7 @@ def main():
         st = json.loads(path.read_text())
         print("SAMPLE AGE:", round(time.time() - st["timestamp"]), "seconds")
         print(display(st))
-        print("Mihomo telemetry is active-connection sampled, not exact wire bytes.")
+        print("Observed deltas only; first-seen cumulative bytes excluded. Short flows may be missed.")
         return
     if not args.run:
         parser.error("specify --run or --status")
@@ -219,10 +226,11 @@ def main():
                 "active_connections": active,
                 "newly_seen_last_poll": new_counts,
                 "healthy": healthy,
+                "controller_alive": dict(healthy),
                 "weights": weights,
                 "reason": reason,
                 "routing_mode": "SHADOW_ONLY",
-                "caveat": "active-connection sampling may miss short-lived flows; never exact interface wire bytes"
+                "caveat": "first-seen accumulated bytes are excluded; short flows missed; not wire bytes"
             }
             atomic_status(path, st)
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -235,6 +243,7 @@ def main():
                 "active_connections": {"NAIVE": 0, "MIERU": 0},
                 "newly_seen_last_poll": {"NAIVE": 0, "MIERU": 0},
                 "healthy": {"NAIVE": False, "MIERU": False},
+                "controller_alive": {"NAIVE": None, "MIERU": None},
                 "weights": {"NAIVE": 0.0, "MIERU": 0.0},
                 "reason": "CONTROLLER_ERROR",
                 "routing_mode": "SHADOW_ONLY",
