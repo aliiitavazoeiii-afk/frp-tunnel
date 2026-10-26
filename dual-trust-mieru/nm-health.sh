@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-D=/etc/dual-naive-mieru/iran
+D=/etc/dual-trust-mieru/iran
 MODE=${1:---quick}
 ROLE_FILTER=${2:-all}
 [[ "$MODE" == --quick || "$MODE" == --full ]] || { echo "usage: dual-health [--quick|--full] [all|naive|mieru]" >&2; exit 2; }
@@ -91,8 +91,8 @@ probe_udp_label(){
 
 role_ip(){ local f=$1; [[ -s "$f" ]] && jq -r '.public_ip // "unknown"' "$f" 2>/dev/null || echo unknown; }
 
-printf '%b%s%b\n' "$B$C" 'DUAL MIERU NAIVE TUNNEL — HEALTH' "$N"
-if [[ -s "$D/naive-bundle.json" ]]; then printf 'Naive foreign : %s\n' "$(role_ip "$D/naive-bundle.json")"; fi
+printf '%b%s%b\n' "$B$C" 'NAIVE + MIERU TUNNEL — HEALTH' "$N"
+if [[ -s "/etc/dual-trust-mieru/naive-mieru/bundle.json" ]]; then printf 'Naive foreign : %s\n' "$(role_ip "/etc/dual-trust-mieru/naive-mieru/bundle.json")"; fi
 if [[ -s "$D/mieru-bundle.json" ]]; then printf 'Mieru foreign : %s\n' "$(role_ip "$D/mieru-bundle.json")"; fi
 
 echo
