@@ -52,12 +52,14 @@ restart_role(){
   echo 'x-ui, Dispatcher, shared bridge and the other carrier will not be restarted.'
   read -r -p "Type $word to confirm: " ANSWER
   [[ "$ANSWER" == "$word" ]] || { echo 'Cancelled';return 0; }
-  exec 8>/run/dual-trust-mieru-autoheal.lock
-  flock -w 30 8 || { echo 'Autoheal busy. Retry later.';return 1; }
-  systemctl restart "$svc.service"
-  sleep 3
-  systemctl is-active --quiet "$svc.service"
-  "$HEALTH" --quick "$role"
+  (
+    exec 8>/run/dual-trust-mieru-autoheal.lock
+    flock -w 30 8 || { echo 'Autoheal busy. Retry later.';exit 1; }
+    systemctl restart "$svc.service"
+    sleep 3
+    systemctl is-active --quiet "$svc.service"
+    "$HEALTH" --quick "$role"
+  )
 }
 low_noise(){
   echo '=== CONSERVATIVE HEALTH PROFILE ==='
