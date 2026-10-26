@@ -10,8 +10,8 @@ LIVE=(x-ui dual-dispatcher dual-xudp-bridge nm-naive-client dual-mieru-carrier)
 [[ -s /etc/dual-trust-mieru/iran/controller.secret ]] || exit 1
 grep -q 'strategy: round-robin' /etc/dual-trust-mieru/iran/dispatcher.yaml
 for svc in "${LIVE[@]}"; do systemctl is-active --quiet "$svc.service" || exit 1; done
-for f in nm-adaptive-core.py nm-adaptive-canary.py nm-adaptive-test.py nm-cli.sh; do test -s "$B/$f"; done
-bash -n "$B/nm-cli.sh"
+for f in nm-adaptive-core.py nm-adaptive-canary.py nm-adaptive-test.py nm-cli.sh nm-manager.sh; do test -s "$B/$f"; done
+bash -n "$B/nm-cli.sh" "$B/nm-manager.sh"
 python3 -m py_compile "$B/nm-adaptive-core.py" "$B/nm-adaptive-canary.py" "$B/nm-adaptive-test.py"
 python3 "$B/nm-adaptive-test.py" -q
 mkdir -p "$BASE" "$STATE"
@@ -20,7 +20,7 @@ BEFORE=$(for svc in "${LIVE[@]}"; do echo "$svc $(systemctl show -p MainPID --va
 BK="/var/lib/dual-trust-mieru/naive-mieru/adaptive/installer-backup-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BK"
 chmod 0700 "$BK"
-for f in /usr/local/bin/dual /usr/local/sbin/dual-manager /etc/systemd/system/nm-adaptive-shadow.service /etc/systemd/system/nm-adaptive-canary.service; do
+for f in /usr/local/bin/dual /usr/local/sbin/dual-manager /usr/local/lib/naive-mieru-manager/nm-manager.sh /etc/systemd/system/nm-adaptive-shadow.service /etc/systemd/system/nm-adaptive-canary.service; do
   [[ ! -f "$f" ]] || cp -a "$f" "$BK/$(basename "$f")"
 done
 install -m 0750 "$B/nm-adaptive-core.py" "$BASE/nm-adaptive-core.py"
@@ -71,6 +71,8 @@ else
   systemctl enable --now nm-adaptive-shadow.service
 fi
 systemctl is-active --quiet nm-adaptive-shadow.service
+mkdir -p /usr/local/lib/naive-mieru-manager
+install -m 0755 "$B/nm-manager.sh" /usr/local/lib/naive-mieru-manager/nm-manager.sh
 install -m 0755 "$B/nm-cli.sh" /usr/local/bin/dual
 install -m 0755 "$B/nm-cli.sh" /usr/local/sbin/dual-manager
 AFTER=$(for svc in "${LIVE[@]}"; do echo "$svc $(systemctl show -p MainPID --value "$svc.service")"; done)
