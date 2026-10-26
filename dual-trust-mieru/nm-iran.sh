@@ -39,10 +39,21 @@ full_health(){
   local direct=$1 path=$2 i good=0
   probe "$direct" || { log "direct :$direct HTTP FAILED"; return 1; }
   probe "$path" || { log "split :$path HTTP FAILED"; return 1; }
+  # Exactly one HTTP request per attempt. The prior implementation tried
+  # separate HTTP requests for each acceptable status, causing up to 9 requests,
+  # unnecessary load and misleading intermittent-failure diagnostics.
+  local tg_code tg_rc
   for i in 1 2 3; do
-    for code in 200 301 302; do
-      if probe "$path" https://api.telegram.org/ "$code"; then good=$((good+1)); break; fi
-    done
+    tg_rc=0
+    tg_code=$(curl -4 -sS --socks5-hostname "127.0.0.1:$path" \
+      --connect-timeout 5 --max-time 12 -o /dev/null \
+      -w '%{http_code}' https://api.telegram.org/ 2>/dev/null) || tg_rc=$?
+    if [[ "$tg_rc" -eq 0 && "$tg_code" =~ ^(200|301|302)$ ]]; then
+      good=$((good+1))
+      log "Telegram HTTPS attempt $i/3: OK HTTP=$tg_code"
+    else
+      log "Telegram HTTPS attempt $i/3: FAIL curl_rc=$tg_rc HTTP=${tg_code:-000}"
+    fi
   done
   (( good >= 2 )) || { log "Telegram HTTPS synthetic FAILED ($good/3)"; return 1; }
   local telegram_ok=$good
