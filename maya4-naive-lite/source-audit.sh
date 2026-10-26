@@ -49,6 +49,8 @@ grep -q '"$LOCAL_REPLACE" "$TMP"' replace-foreign-auto.sh
 grep -q 'Replace foreign server (enter new IP only)' manager.sh
 grep -q 'exec /usr/local/sbin/maya4-manager' enable-replace-command.sh
 grep -q 'exec /usr/local/sbin/maya4-replace-auto' enable-replace-command.sh
+grep -q 'Run: dual status' enable-replace-command.sh
+grep -q 'usage: dual \[status|health|restart|replace \[NEW_IP\]\]' enable-replace-command.sh
 if grep -qE 'systemctl (stop|restart|disable) x-ui' replace-foreign-auto.sh manager.sh; then
   echo 'ERROR: dashboard/auto replacement must never stop/restart x-ui' >&2
   exit 1
