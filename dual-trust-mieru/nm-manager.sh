@@ -9,7 +9,11 @@ HEALTH=/usr/local/sbin/nm-health
 [[ -x "$HEALTH" ]] || HEALTH=$B/nm-health.sh
 if [[ $EUID -ne 0 ]]; then exec sudo -- "$0" "$@";fi
 [[ -t 0 ]] || { echo 'Interactive terminal required; use dual status / dual health instead' >&2;exit 2; }
-is_active(){ systemctl is-active "$1.service" 2>/dev/null || true; }
+is_active(){
+  local unit=$1
+  [[ "$unit" == *.* ]] || unit="$unit.service"
+  systemctl is-active "$unit" 2>/dev/null || true
+}
 pause(){ echo;read -r -p 'Press Enter to continue...' _ || true; }
 header(){
   clear 2>/dev/null || true
