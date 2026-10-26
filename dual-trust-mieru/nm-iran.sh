@@ -55,7 +55,7 @@ full_health(){
       log "Telegram HTTPS attempt $i/3: FAIL curl_rc=$tg_rc HTTP=${tg_code:-000}"
     fi
   done
-  (( good >= 2 )) || { log "Telegram HTTPS synthetic FAILED ($good/3)"; return 1; }
+  (( good == 3 )) || { log "Telegram HTTPS synthetic FAILED ($good/3); strict 3/3 required"; return 1; }
   local telegram_ok=$good
   good=0
   for i in 1 2 3; do l3_udp "$path" && good=$((good+1)) || true; done
@@ -213,6 +213,16 @@ restore_alias_cli(){
 }
 cutover(){
   require_live
+  [[ -s "$STATE/soak-ok" ]] || l3_die 'required 20/20 Naive canary not passed; run soak before cutover'
+  local soak_time soak_naive_pid soak_xudp_pid
+  read -r soak_time soak_naive_pid soak_xudp_pid < "$STATE/soak-ok"
+  [[ "$soak_time" =~ ^[0-9]+$ ]] || l3_die 'invalid canary timestamp'
+  (( $(date -u +%s) - soak_time <= 900 )) ||
+    l3_die 'Naive soak approval expired; rerun soak'
+  [[ "$soak_naive_pid" == "$(systemctl show -p MainPID --value nm-naive-candidate.service)" ]] ||
+    l3_die 'Naive candidate restarted since soak; rerun soak'
+  [[ "$soak_xudp_pid" == "$(systemctl show -p MainPID --value nm-xudp-candidate.service)" ]] ||
+    l3_die 'candidate XUDP restarted since soak; rerun soak'
   [[ -s "$BUNDLE" && -s "$D/naive-live.json" ]] || l3_die 'run prepare first'
   validate_bundle "$BUNDLE"
   systemctl is-active --quiet nm-naive-candidate.service || l3_die 'candidate inactive'
@@ -279,6 +289,60 @@ EOF
   log 'POOL remains STICKY with legacy internal XUDP-TRUST alias until gated rebalance.'
   log 'The old foreign Trust VPS is NOT deleted; retire separately after soak verification.'
 }
+soak(){
+  require_live
+  [[ -s "$BUNDLE" ]] || l3_die 'missing imported Naive bundle; run prepare first'
+  validate_bundle "$BUNDLE"
+  local svc port url attempts label i good rc status elapsed result failures=0
+  for svc in nm-naive-candidate nm-xudp-candidate; do
+    systemctl is-active --quiet "$svc.service" || l3_die "candidate inactive: $svc"
+  done
+  # Invalidate any earlier approval; even a failed second soak cannot be reused.
+  rm -f "$STATE/soak-ok"
+  log 'Naive canary: 20 Telegram HTTPS checks via full XUDP candidate, 5 via direct Naive, 5 HTTP 204; Mieru never modified.'
+  for spec in \
+    '17991|https://api.telegram.org/|20|Naive-full-Telegram' \
+    '17993|https://api.telegram.org/|5|Naive-direct-Telegram' \
+    '17991|https://www.gstatic.com/generate_204|5|Naive-full-HTTP' \
+    '7992|https://api.telegram.org/|3|Mieru-Telegram-baseline'; do
+    IFS='|' read -r port url attempts label <<<"$spec"
+    good=0
+    for i in $(seq 1 "$attempts"); do
+      rc=0
+      result=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" \
+        --connect-timeout 5 --max-time 12 -o /dev/null \
+        -w '%{http_code} %{time_total}' "$url" 2>/dev/null) || rc=$?
+      status=${result%% *}; elapsed=${result#* }
+      if [[ "$rc" == 0 ]] && {
+        [[ "$url" == *generate_204 && "$status" == 204 ]] ||
+        [[ "$url" == *telegram.org* && "$status" =~ ^(200|301|302)$ ]]
+      }; then
+        good=$((good+1))
+      else
+        failures=$((failures+1))
+        log "$label failed attempt=$i/$attempts rc=$rc status=${status:-000} elapsed=${elapsed:-?}"
+      fi
+      sleep 0.6
+    done
+    log "$label: $good/$attempts"
+  done
+  for port in 17991 7992; do
+    good=0
+    for i in 1 2 3; do
+      if l3_udp "$port"; then good=$((good+1)); fi
+    done
+    log "SOCKS UDP/XUDP port=$port: $good/3"
+    [[ "$good" == 3 ]] || failures=$((failures+1))
+  done
+  if (( failures != 0 )); then
+    l3_die "Naive canary FAILED ($failures failing checks). No user routing changes; do not cutover."
+  fi
+  local stamp
+  stamp="$(date -u +%s) $(systemctl show -p MainPID --value nm-naive-candidate.service) $(systemctl show -p MainPID --value nm-xudp-candidate.service)"
+  umask 077
+  printf '%s\n' "$stamp" > "$STATE/soak-ok"
+  log 'SOAK PASS: all checks passed; cutover allowed within 15 minutes if candidate services remain unchanged.'
+}
 diagnose(){
   require_live
   log "Read-only candidate diagnostics; no services restarted or configurations reloaded"
@@ -308,7 +372,8 @@ diagnose(){
 case "$MODE" in
   prepare) prepare "$@" ;;
   diagnose) diagnose ;;
+  soak) soak ;;
   cutover) cutover ;;
   status) exec bash "$B/nm-cli.sh" status ;;
-  *) echo "usage: $0 prepare [foreign-bundle.json] | diagnose | cutover | status" >&2; exit 2 ;;
+  *) echo "usage: $0 prepare [foreign-bundle.json] | diagnose | soak | cutover | status" >&2; exit 2 ;;
 esac
