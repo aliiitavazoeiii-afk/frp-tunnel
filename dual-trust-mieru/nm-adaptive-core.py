@@ -109,6 +109,19 @@ def policy(traffic, healthy, span_seconds, telemetry_fresh=True):
     return {"NAIVE": round(target, 4), "MIERU": round(1 - target, 4)}, "ADAPTIVE"
 
 
+
+def shadow_policy(traffic, controller_flags, span_seconds):
+    """Do NOT infer eligibility from a negative Controller flag alone.
+
+    Under lazy health checking a flag can disagree with forced-path probes.
+    Without independent verified health, halt CANARY decisions rather than
+    silently route 100% toward the other carrier. Production is untouched.
+    """
+    if any(controller_flags.get(role) is not True for role in ROLES):
+        return {role: 0.0 for role in ROLES}, "HEALTH_UNVERIFIED"
+    return policy(traffic, controller_flags, span_seconds)
+
+
 class SmoothChooser:
     """Deterministic weighted distribution; only choose on new SOCKS connections."""
     def __init__(self):
@@ -216,7 +229,7 @@ def main():
             rolling.add(now, delta)
             prev_time = now
             healthy = dict(health)
-            weights, reason = policy(rolling.totals(now), healthy, rolling.span())
+            weights, reason = shadow_policy(rolling.totals(now), healthy, rolling.span())
             st = {
                 "schema": 1,
                 "timestamp": wall,
