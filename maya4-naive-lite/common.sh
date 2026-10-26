@@ -6,7 +6,7 @@ STATE=/var/lib/maya4-naive
 BIN=/usr/local/lib/maya4-naive
 NAIVE_PORT=7995
 ENTRY_PORT=7996
-XRAY_VERSION=v26.9.8
+XRAY_VERSION=v26.10.21
 
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die(){ echo "ERROR: $*" >&2; exit 1; }
@@ -41,11 +41,11 @@ install_xray(){
   case "$a" in
     amd64)
       url="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION/Xray-linux-64.zip"
-      sha="a8c6d5b53957600d7e18d16e697201a4c942fe823307deb039bf8f40587aa556"
+      sha="0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
       ;;
     arm64)
       url="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION/Xray-linux-arm64-v8a.zip"
-      sha="6721edb5b80e046536abc8235bd0977a2c69ade88ad42c01c0df368beba070dc"
+      sha="d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
       ;;
   esac
   if [[ ! -x "$BIN/xray-$XRAY_VERSION" ]]; then
