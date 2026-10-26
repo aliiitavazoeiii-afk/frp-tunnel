@@ -192,6 +192,7 @@ restore_alias_cli(){
   install -m 0755 "$B/nm-cli.sh" /usr/local/sbin/dual-manager
   install -m 0755 "$B/nm-health.sh" /usr/local/sbin/dual-health
   install -m 0755 "$B/nm-health.sh" /usr/local/sbin/nm-health
+  install -m 0755 "$B/nm-pool-balance.py" /usr/local/sbin/nm-pool-balance
 }
 cutover(){
   require_live
