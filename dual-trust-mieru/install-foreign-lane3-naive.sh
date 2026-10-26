@@ -140,6 +140,10 @@ cat > "$D/Caddyfile" <<EOF2
       allow xudp-lane3.internal
       allow xudp-trust.internal
       allow 127.0.0.1/32
+      # IPv6 outbound to some destinations is degraded on this VPS.
+      # Reject AAAA dial targets inside ForwardProxy only. IPv4 destinations
+      # and local XUDP IPv4 remain allowed. Host IPv6 stays enabled.
+      deny ::/0
     }
   }
   root * /var/www/lane3-naive
