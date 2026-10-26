@@ -10,12 +10,31 @@ install_xray
 PUBLIC_IP=''
 DOMAIN=''
 EMAIL=''
+NONINTERACTIVE=0
 
-read -r -p 'Maya4 foreign public IPv4: ' PUBLIC_IP
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --public-ip) PUBLIC_IP=${2:-}; shift 2 ;;
+    --domain) DOMAIN=${2:-}; shift 2 ;;
+    --email) EMAIL=${2:-}; shift 2 ;;
+    --non-interactive) NONINTERACTIVE=1; shift ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+if [[ -z "$PUBLIC_IP" && $NONINTERACTIVE -eq 0 ]]; then
+  read -r -p 'Maya4 foreign public IPv4: ' PUBLIC_IP
+fi
 valid_ipv4 "$PUBLIC_IP" || die 'valid public IPv4 required'
-read -r -p 'Maya4 Naive domain: ' DOMAIN
+
+if [[ -z "$DOMAIN" && $NONINTERACTIVE -eq 0 ]]; then
+  read -r -p 'Maya4 Naive domain: ' DOMAIN
+fi
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die 'valid domain required'
-read -r -p "Let's Encrypt email: " EMAIL
+
+if [[ -z "$EMAIL" && $NONINTERACTIVE -eq 0 ]]; then
+  read -r -p "Let's Encrypt email: " EMAIL
+fi
 [[ "$EMAIL" =~ ^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$ ]] || die 'valid email required'
 
 D=/etc/maya4-naive-foreign
