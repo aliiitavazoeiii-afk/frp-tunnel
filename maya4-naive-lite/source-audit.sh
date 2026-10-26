@@ -4,7 +4,7 @@ B=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$B"
 
 echo '=== Maya4 Naive Lite source audit ==='
-for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh replace-foreign.sh enable-replace-command.sh; do
+for f in common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh replace-foreign.sh replace-foreign-auto.sh manager.sh enable-replace-command.sh; do
   printf '%-28s ' "$f"
   bash -n "$f"
   echo OK
@@ -42,6 +42,17 @@ grep -q 'RESUME_EXISTING=1' install-foreign.sh
 grep -q 'Any HTTP status is acceptable here' install-foreign.sh
 ! grep -q 'curl -fsS.*resolve.*DOMAIN:443' install-foreign.sh
 grep -q 'xudp-maya4.internal' install-foreign.sh
+grep -q -- '--non-interactive' install-foreign.sh
+grep -q "DOMAIN='naive4.biya2film.top'" replace-foreign-auto.sh
+grep -q 'install-foreign.sh --public-ip "$IP" --domain "$DOMAIN" --email "$EMAIL" --non-interactive' replace-foreign-auto.sh
+grep -q '"$LOCAL_REPLACE" "$TMP"' replace-foreign-auto.sh
+grep -q 'Replace foreign server (enter new IP only)' manager.sh
+grep -q 'exec /usr/local/sbin/maya4-manager' enable-replace-command.sh
+grep -q 'exec /usr/local/sbin/maya4-replace-auto' enable-replace-command.sh
+if grep -qE 'systemctl (stop|restart|disable) x-ui' replace-foreign-auto.sh manager.sh; then
+  echo 'ERROR: dashboard/auto replacement must never stop/restart x-ui' >&2
+  exit 1
+fi
 
 # Maya4 is deliberately single-carrier: no dispatcher, Mihomo, Trust or Mieru.
 runtime_files=(common.sh install-foreign.sh install-iran.sh attach-xui.sh health.sh)
