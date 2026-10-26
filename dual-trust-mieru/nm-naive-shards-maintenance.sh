@@ -184,7 +184,8 @@ EOF
   if ! systemctl restart nm-naive-client.service ||
      ! alive nm-naive-client ||
      ! probe 7993 5 ||
-     ! probe 7991 3;then
+     ! probe 7991 3 ||
+     ! /usr/local/sbin/nm-health --full naive;then
     log 'Naive gateway unhealthy; automatic rollback to original client.'
     restore || log 'CRITICAL: Naive rollback failed; inspect systemctl status'
     die 'cutover postflight failed'
