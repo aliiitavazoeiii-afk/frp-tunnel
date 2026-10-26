@@ -103,6 +103,19 @@ class PoolGuardTests(unittest.TestCase):
             self.assertEqual(apply.call_args.args[1],
                              ['XUDP-TRUST', 'XUDP-MIERU'])
 
+    def test_udp_probe_timeout_is_unhealthy_not_crash(self):
+        with mock.patch.object(guard.socket, 'create_connection',
+                               side_effect=TimeoutError('simulated timeout')):
+            self.assertFalse(guard.udp_probe(7991))
+
+    def test_probe_requires_udp_and_telegram(self):
+        with mock.patch.object(guard, 'http_probe',
+                               side_effect=[(True, 0.15), (True, 0.3)]), \
+             mock.patch.object(guard, 'udp_probe', return_value=False):
+            output = guard.probe('trust')
+            self.assertFalse(output['ok'])
+            self.assertFalse(output['udp_xudp'])
+
     def test_controller_readback_is_required(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = Path(d) / 'dispatcher.yaml'
