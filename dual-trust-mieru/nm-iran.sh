@@ -293,7 +293,7 @@ diagnose(){
         out=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" \
           --connect-timeout 5 --max-time 12 -o /dev/null \
           -w "HTTP=%{http_code} total=%{time_total}s" "$url" 2>/dev/null) || rc=$?
-        printf "try=%s url=%s curl_rc=%s %s\n" "$i" "${url##*/}" "$rc" "$out"
+        printf "try=%s url=%s curl_rc=%s %s\n" "$i" "$url" "$rc" "$out"
       done
     done
   done
