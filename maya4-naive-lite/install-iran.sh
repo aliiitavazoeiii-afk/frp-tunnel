@@ -172,21 +172,7 @@ sleep 4
 
 install -m 0755 "$B/health.sh" /usr/local/sbin/maya4-health
 install -m 0755 "$B/attach-xui.sh" /usr/local/sbin/maya4-attach
-cat > /usr/local/bin/maya4 <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-case "${1:-status}" in
-  status|health) exec /usr/local/sbin/maya4-health ;;
-  attach) exec /usr/local/sbin/maya4-attach ;;
-  restart)
-    systemctl restart maya4-naive-client.service maya4-xudp-router.service
-    sleep 3
-    exec /usr/local/sbin/maya4-health
-    ;;
-  *) echo 'usage: maya4 [status|health|attach|restart]' >&2; exit 2 ;;
-esac
-EOF
-chmod 0755 /usr/local/bin/maya4
+bash "$B/enable-replace-command.sh"
 
 /usr/local/sbin/maya4-health || die 'Maya4 tunnel health failed after install'
 
@@ -195,6 +181,7 @@ echo
 echo '3X-UI is installed and running.'
 echo 'If this is a fresh panel, create your normal public inbound in 3X-UI first.'
 echo 'Then route that inbound through Naive with: maya4 attach'
+echo 'Dashboard: maya4'
 echo 'Health command: maya4 health'
 echo '3X-UI menu: x-ui'
 echo 'Do not paste /etc/maya4-naive/bundle.json into chat or a repository.'
