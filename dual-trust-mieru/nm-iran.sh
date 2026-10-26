@@ -279,9 +279,36 @@ EOF
   log 'POOL remains STICKY with legacy internal XUDP-TRUST alias until gated rebalance.'
   log 'The old foreign Trust VPS is NOT deleted; retire separately after soak verification.'
 }
+diagnose(){
+  require_live
+  log "Read-only candidate diagnostics; no services restarted or configurations reloaded"
+  for svc in nm-naive-candidate nm-xudp-candidate dual-mieru-carrier; do
+    printf "%-26s %s\n" "$svc" "$(systemctl is-active "$svc.service" 2>/dev/null || true)"
+  done
+  for port in 17993 17991 7992; do
+    echo "--- SOCKS :$port ---"
+    for url in https://www.gstatic.com/generate_204 https://api.telegram.org/; do
+      for i in 1 2 3; do
+        local out rc=0
+        out=$(curl -4 -sS --socks5-hostname "127.0.0.1:$port" \
+          --connect-timeout 5 --max-time 12 -o /dev/null \
+          -w "HTTP=%{http_code} total=%{time_total}s" "$url" 2>/dev/null) || rc=$?
+        printf "try=%s url=%s curl_rc=%s %s\n" "$i" "${url##*/}" "$rc" "$out"
+      done
+    done
+  done
+  for port in 17991 7992; do
+    local ok=0
+    for i in 1 2 3; do
+      if l3_udp "$port"; then ok=$((ok+1)); fi
+    done
+    printf "XUDP role=:%s success=%s/3\n" "$port" "$ok"
+  done
+}
 case "$MODE" in
   prepare) prepare "$@" ;;
+  diagnose) diagnose ;;
   cutover) cutover ;;
   status) exec bash "$B/nm-cli.sh" status ;;
-  *) echo "usage: $0 prepare [foreign-bundle.json] | cutover | status" >&2; exit 2 ;;
+  *) echo "usage: $0 prepare [foreign-bundle.json] | diagnose | cutover | status" >&2; exit 2 ;;
 esac
