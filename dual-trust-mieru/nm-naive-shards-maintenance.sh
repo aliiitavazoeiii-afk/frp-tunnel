@@ -43,13 +43,26 @@ stage(){
   [[ -f "$ORIG" && -x "$B/naive" && -x "$B/mihomo" ]] || die 'missing verified live files'
   [[ ! -e "$O" && ! -e "$R" ]] || die 'stage/override already exists; aborting'
   systemctl show nm-naive-client.service -p ExecStart --value | grep -Fq "$ORIG" || die 'unexpected live ExecStart'
-  for p in 17993 17994 17995;do
-    ! ss -H -ltn "sport = :$p" | grep -q . || die "port $p occupied"
+  # Backend ports are fixed for the Naive clients. The test gateway chooses
+  # a separate free port, leaving any existing service (e.g. :17995) untouched.
+  for p in 17993 17994;do
+    ! ss -H -ltn "sport = :$p" | grep -q . || die "Naive backend port $p occupied"
   done
+  local stage_port=''
+  for p in 17995 17996 17997 18095 18096 18995;do
+    if ! ss -H -ltn "sport = :$p" | grep -q .;then
+      stage_port=$p
+      break
+    fi
+  done
+  [[ -n "$stage_port" ]] || die 'no free staging gateway port among reserved candidates'
+  log "Selected free staging gateway port :$stage_port"
   probe 7994 2 || die 'Mieru unhealthy before stage'
   mkdir -p "$R" "$D/stage" "$D/live"
   chmod 0700 "$R" "$D" "$D/stage" "$D/live"
-  SRC="$ORIG" OUT="$R" python3 <<'PY'
+  printf '%s\n' "$stage_port" >"$R/stage-port"
+  chmod 0600 "$R/stage-port"
+  SRC="$ORIG" OUT="$R" STAGE_PORT="$stage_port" python3 <<'PY'
 import json,os,pathlib
 src=json.loads(pathlib.Path(os.environ["SRC"]).read_text())
 assert src.get("listen")=="socks://127.0.0.1:7993"
@@ -94,7 +107,7 @@ proxy-groups:
 rules:
   - MATCH,NAIVE-SHARDS
 """
-for filename,port in (("stage.yaml",17995),("live.yaml",7993)):
+for filename,port in (("stage.yaml",int(os.environ["STAGE_PORT"])),("live.yaml",7993)):
     f=root/filename
     with f.open("x") as out:out.write(template.replace("PORT",str(port)))
     f.chmod(0o600)
@@ -145,7 +158,7 @@ EOF
   for x in nm-naive-shard-a nm-naive-shard-b nm-naive-staging-gw;do alive "$x" || die "$x inactive";done
   probe 17993 5 || die 'shard A failed; production untouched'
   probe 17994 5 || die 'shard B failed; production untouched'
-  probe 17995 12 || die 'stage gateway failed; production untouched'
+  probe "$stage_port" 12 || die 'stage gateway failed; production untouched'
   probe 7994 2 || die 'Mieru baseline failed; production untouched'
   log "STAGE PASS: production services and ports unchanged."
 }
@@ -158,12 +171,15 @@ restore(){
 cutover(){
   services
   alive nm-naive-client || die 'original live Naive is down'
-  [[ ! -e "$O" && -s "$R/live.yaml" ]] || die 'no healthy stage or already cut over'
+  [[ ! -e "$O" && -s "$R/live.yaml" && -s "$R/stage-port" ]] || die 'no healthy stage or already cut over'
+  local stage_port
+  stage_port=$(cat "$R/stage-port")
+  [[ "$stage_port" =~ ^[0-9]{4,5}$ ]] || die 'invalid staging port'
   systemctl show nm-naive-client.service -p ExecStart --value | grep -Fq "$ORIG" || die 'unknown ExecStart'
   for s in nm-naive-shard-a nm-naive-shard-b nm-naive-staging-gw;do alive "$s" || die "missing stage: $s";done
   probe 17993 4 || die 'shard A unhealthy'
   probe 17994 4 || die 'shard B unhealthy'
-  probe 17995 8 || die 'staging gateway unhealthy'
+  probe "$stage_port" 8 || die 'staging gateway unhealthy'
   probe 7994 4 || die 'Mieru unhealthy; cutover blocked'
   "$B/mihomo" -t -d "$D/live" -f "$R/live.yaml" >/dev/null || die 'gateway config invalid'
   exec 8>/run/dual-trust-mieru-autoheal.lock
@@ -193,7 +209,7 @@ EOF
   [[ "$(pids)" == "$before" ]] || log 'WARNING: protected service PID changed externally'
   # Staging gateway is no longer needed after successful live takeover.
   systemctl disable --now nm-naive-staging-gw.service >/dev/null ||
-    log 'WARNING: staging gateway remains on isolated :17995; production unaffected'
+    log "WARNING: staging gateway remains on isolated :$stage_port; production unaffected"
   log 'LIVE SUCCESS: two independent Naive clients load balanced behind original :7993'
   log 'Mieru, x-ui, production Dispatcher and shared XUDP bridge NOT restarted'
 }
@@ -210,6 +226,7 @@ status(){
   for s in "${PROTECTED[@]}" nm-naive-client nm-naive-shard-a nm-naive-shard-b nm-naive-staging-gw;do
     echo "$s: $(systemctl is-active "$s.service" 2>/dev/null || true)"
   done
+  if [[ -s "$R/stage-port" ]];then echo "STAGING_GATEWAY_PORT=$(cat "$R/stage-port")";fi
   if [[ -f "$O" ]];then echo "NAIVE_SHARDING=LIVE";else echo "NAIVE_SHARDING=STAGING_OR_OFF";fi
 }
 case "$MODE" in
