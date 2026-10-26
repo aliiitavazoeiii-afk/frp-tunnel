@@ -48,6 +48,7 @@ l3_install_naive(){
   curl -fsSL --retry 4 --connect-timeout 10 --max-time 60 \
     https://api.github.com/repos/klzgrad/naiveproxy/releases/latest -o "$meta"
   tag=$(jq -r '.tag_name // empty' "$meta")
+  [[ "$tag" == 'v154.0.8037.49-5' ]] || l3_die 'NaiveProxy release changed; security review and version update required'
   asset=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | .name' "$meta" | head -n1)
   url=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | .browser_download_url' "$meta" | head -n1)
   digest=$(jq -r --arg s "$suffix" '.assets[] | select(.name|endswith($s)) | (.digest // empty)' "$meta" | head -n1)
