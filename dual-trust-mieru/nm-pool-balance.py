@@ -29,23 +29,24 @@ def api(method, path, body=None):
         return json.loads(blob) if blob else {}
 
 def build(old):
-    expected = [
-        ('  - name: XUDP-TRUST\n', '  - name: XUDP-NAIVE\n'),
-        ('      - XUDP-TRUST\n', '      - XUDP-NAIVE\n'),
-        ('    strategy: sticky-sessions\n', '    strategy: round-robin\n'),
-        ('    interval: 120\n', '    interval: 60\n'),
-        ('    lazy: true\n', '    lazy: false\n'),
+    """Change only balancing strategy; preserve running compatibility aliases.
+
+    An explicit later maintenance change can rename the historical proxy names
+    without combining multiple behavior changes in one reload.
+    """
+    existing = '    strategy: sticky-sessions\n'
+    assert_old = [
+        '  - name: XUDP-TRUST\n',
+        '      - XUDP-TRUST\n',
+        '      - XUDP-MIERU\n',
+        '    type: load-balance\n',
     ]
-    changed = old
-    for a, b in expected:
-        if changed.count(a) != 1:
-            raise RuntimeError('refusing unfamiliar dispatcher layout: '+a.strip())
-        changed=changed.replace(a,b,1)
-    if changed.count('      - XUDP-MIERU\n') != 1:
-        raise RuntimeError('Mieru membership mismatch')
-    if changed.count('    type: load-balance\n') != 1:
-        raise RuntimeError('expected one load-balance pool')
-    return changed
+    if old.count(existing) != 1:
+        raise RuntimeError('expected one sticky-sessions pool; refusing unfamiliar config')
+    for marker in assert_old:
+        if old.count(marker) != 1:
+            raise RuntimeError('required compatibility member absent: ' + marker.strip())
+    return old.replace(existing, '    strategy: round-robin\n', 1)
 
 def probe(port):
     p = subprocess.run(['curl','-4','-sS','--socks5-hostname',
@@ -96,7 +97,8 @@ def main():
         candidate=build(CFG.read_text())
     if args.plan:
         print('PLAN: route Naive/Mieru ~50/50 by NEW CONNECTION COUNT, round-robin')
-        print('Changes: XUDP-TRUST internal alias -> XUDP-NAIVE, 120s lazy sticky -> 60s eager round-robin')
+        print('ONLY CHANGE: sticky-sessions -> round-robin; preserve both existing alias names, health interval and lazy policy')
+        print('ACTIVE CONNECTIONS:', active_sessions(), '(apply forbidden unless 0)')
         print('DRY RUN ONLY: no live reload, no service restarts, no credential output')
         return
     if not pathlib.Path('/var/lib/dual-trust-mieru/naive-mieru/live-cutover.timestamp').is_file():
@@ -109,6 +111,8 @@ def main():
     if count!=0:
         raise RuntimeError('SAFETY BLOCK: '+str(count)+' active connections; reload could interrupt Mieru users. Keep STICKY until maintenance window with zero sessions.')
     validate(candidate)
+    if active_sessions()!=0:
+        raise RuntimeError('SAFETY BLOCK: connections appeared during validation; refusing reload')
     old=CFG.read_text()
     if old==candidate:
         print('Already configured');return
@@ -120,7 +124,7 @@ def main():
         api('PUT','/configs',{'payload':candidate})
         applied=True
         info=api('GET','/proxies/DUAL')
-        desired=['XUDP-MIERU','XUDP-NAIVE'] if args.apply else ['XUDP-MIERU','XUDP-TRUST']
+        desired=['XUDP-MIERU','XUDP-TRUST']
         if set(info.get('all',[]))!=set(desired):
             raise RuntimeError('pool API readback differs from intended membership')
         write_atomic(CFG,candidate)
