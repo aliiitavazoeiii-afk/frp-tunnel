@@ -55,6 +55,14 @@ heal_carrier(){
   if probe_http "$port"; then set_count "$f" 0; return 0; fi
   n=$(get_count "$f"); n=$((n+1)); set_count "$f" "$n"; log "$name direct unhealthy cycle=$n/$THRESHOLD"
   (( n >= THRESHOLD )) || return 1
+  # A confirmed foreign quarantine is a data-path failure, not a local daemon
+  # failure. Repeated local restarts cannot clear upstream filtering.
+  if [[ -s /var/lib/dual-trust-mieru/pool-guard/state.json ]] &&
+     python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); sys.exit(0 if sys.argv[2] in s.get("quarantined",{}) else 1)' \
+       /var/lib/dual-trust-mieru/pool-guard/state.json "$name" 2>/dev/null; then
+    log "$name quarantined by pool guard; not restarting carrier for upstream failure"
+    return 1
+  fi
   log "$name restarting only $svc"; systemctl restart "$svc"; sleep 4
   if probe_http "$port"; then set_count "$f" 0; log "$name recovered after selective carrier restart"; return 0; fi
   set_count "$f" 1; log "$name still unhealthy after carrier restart"; return 1
