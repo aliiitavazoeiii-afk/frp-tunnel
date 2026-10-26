@@ -38,8 +38,23 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(s.sample([b])[0]["NAIVE"], 40)
         self.assertEqual(s.sample([b])[0]["NAIVE"], 0)
         self.assertEqual(s.sample([])[0]["NAIVE"], 0)
-        self.assertEqual(s.sample([b])[0]["NAIVE"], 90)  # newly observed, not duplicate
+        self.assertEqual(s.sample([b])[0]["NAIVE"], 0)  # first seen again: historic bytes excluded
         self.assertEqual(s.sample([dict(b, download=2)])[0]["NAIVE"], 0)
+        self.assertEqual(s.sample([dict(b, download=12)])[0]["NAIVE"], 10)
+
+    def test_new_sessions_do_not_import_existing_bytes(self):
+        s = model.CounterSampler()
+        baseline = {"id":"old", "start":"1", "chains":["XUDP-TRUST"],
+                    "upload":0, "download":100_000_000}
+        s.sample([baseline])
+        fresh = {"id":"new", "start":"2", "chains":["XUDP-MIERU"],
+                 "upload":0, "download":500_000_000}
+        first, counts, _ = s.sample([baseline, fresh])
+        self.assertEqual(first["MIERU"], 0)
+        self.assertEqual(counts["MIERU"], 1)
+        again = dict(fresh, download=500_001_000)
+        delta, _, _ = s.sample([baseline, again])
+        self.assertEqual(delta["MIERU"], 1000)
 
     def test_window_and_policy(self):
         roll = model.RollingTraffic(600)
