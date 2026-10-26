@@ -191,6 +191,9 @@ EOF
     die 'cutover postflight failed'
   fi
   [[ "$(pids)" == "$before" ]] || log 'WARNING: protected service PID changed externally'
+  # Staging gateway is no longer needed after successful live takeover.
+  systemctl disable --now nm-naive-staging-gw.service >/dev/null ||
+    log 'WARNING: staging gateway remains on isolated :17995; production unaffected'
   log 'LIVE SUCCESS: two independent Naive clients load balanced behind original :7993'
   log 'Mieru, x-ui, production Dispatcher and shared XUDP bridge NOT restarted'
 }
