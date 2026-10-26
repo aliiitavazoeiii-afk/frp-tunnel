@@ -139,6 +139,7 @@ cat > "$D/Caddyfile" <<EOF2
     acl {
       allow xudp-lane3.internal
       allow xudp-trust.internal
+      allow 127.0.0.1/32
     }
   }
   root * /var/www/lane3-naive
