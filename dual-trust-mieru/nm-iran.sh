@@ -245,12 +245,14 @@ EOF
     cp -a "$STATE/orig-autoheal" /usr/local/sbin/dual-tunnel-autoheal || true
     l3_die 'candidate was healthy but live path failed. Mieru untouched.'
   fi
+  # Persist the proven new carrier BEFORE later observability assertions;
+  # even if an external service unexpectedly changes, reboot must not resurrect Trust.
+  systemctl disable dual-trust-client.service >/dev/null
+  systemctl enable nm-naive-client.service >/dev/null
   local after
   after=$(protected_pids)
   [[ "$before" == "$after" ]] || l3_die 'CRITICAL: protected service PID changed; inspect runtime'
   probe 7994 && probe 7992 || l3_die 'CRITICAL: Mieru degraded after cutover; inspect immediately'
-  systemctl disable dual-trust-client.service >/dev/null
-  systemctl enable nm-naive-client.service >/dev/null
   systemctl stop nm-naive-candidate.service nm-xudp-candidate.service
   restore_alias_cli
   date -Is > "$STATE/live-cutover.timestamp"
