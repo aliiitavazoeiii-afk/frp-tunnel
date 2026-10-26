@@ -21,11 +21,19 @@ status(){
   else
     echo 'Pool: compatibility alias XUDP-TRUST routes to Naive (the strategy above reflects the current saved config)'
   fi
-  echo 'Commands: dual health --full all | dual status | dual balance-plan'
+  echo 'Autoheal            : '"$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true)"
+  echo 'Commands: dual (interactive menu) | dual health --full all | dual status | dual balance-plan'
 }
-case "${1:-status}" in
+case "${1:-}" in
+  '')
+    if [[ -t 0 && -t 1 ]]; then
+      exec /usr/local/lib/naive-mieru-manager/nm-manager.sh
+    else
+      status
+    fi ;;
+  menu) exec /usr/local/lib/naive-mieru-manager/nm-manager.sh ;;
   status) status ;;
   health) shift; exec /usr/local/sbin/nm-health "${1:---quick}" "${2:-all}" ;;
   balance-plan) exec /usr/local/sbin/nm-pool-balance --plan ;;
-  *) echo 'usage: dual [status|health [--quick|--full] [all|naive|mieru]|balance-plan]' >&2; exit 2 ;;
+  *) echo 'usage: dual [menu|status|health [--quick|--full] [all|naive|mieru]|balance-plan]' >&2; exit 2 ;;
 esac
