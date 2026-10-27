@@ -4,6 +4,7 @@
 No production restarts, route/firewall edits, or credential printing.
 Runs a temporary client on loopback :17993 only, then stops only that client.
 """
+import argparse
 import collections
 import concurrent.futures
 import json
@@ -93,6 +94,12 @@ def stats_for_pid(pid):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Compare live Naive, fresh isolated Naive and Mieru without live restarts")
+    parser.add_argument("--rounds", type=int, default=36, help="number of rounds, 3..60 (default: 36)")
+    parser.add_argument("--gap", type=float, default=7.0, help="minimum interval between round starts, 0.5..30 sec")
+    args = parser.parse_args()
+    if not 3 <= args.rounds <= 60 or not 0.5 <= args.gap <= 30:
+        parser.error("rounds must be 3..60 and gap must be 0.5..30 seconds")
     if os.geteuid() != 0:
         raise SystemExit("Run as root")
     before = service_state()
@@ -115,6 +122,7 @@ def main():
     proc = None
     print("=== ISOLATED FRESH NAIVE DIFFERENTIAL TEST ===", flush=True)
     print("Production :7993/:7991/:7990 unchanged; isolated candidate :17993", flush=True)
+    print(f"Sampling {args.rounds} rounds, interval at least {args.gap}s; no production service modifications", flush=True)
     with tempfile.TemporaryDirectory(prefix="nm-client-check-", dir="/run") as directory:
         os.chmod(directory, 0o700)
         cfg = pathlib.Path(directory) / "fresh-naive.json"
@@ -131,7 +139,7 @@ def main():
             print("Fresh isolated client ready. PID=", proc.pid, flush=True)
             print("Live client resources:", stats_for_pid(live_pid), flush=True)
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                for n in range(1, 37):
+                for n in range(1, args.rounds + 1):
                     started = time.monotonic()
                     checks = list(pool.map(curl_check, PATHS))
                     slow_or_failed = any(not ok or secs >= 3 for _, ok, _, _, secs in checks)
@@ -150,9 +158,9 @@ def main():
                             print("Live client:", stats_for_pid(live_pid), flush=True)
                             print("Fresh client:", stats_for_pid(proc.pid), flush=True)
                     elif n % 6 == 0:
-                        print("completed", n, "/36", flush=True)
-                    if n < 36:
-                        time.sleep(max(0, 7 - (time.monotonic() - started)))
+                        print("completed", n, "/", args.rounds, flush=True)
+                    if n < args.rounds:
+                        time.sleep(max(0, args.gap - (time.monotonic() - started)))
         finally:
             if proc is not None and proc.poll() is None:
                 proc.terminate()
@@ -168,8 +176,8 @@ def main():
         row = stats[name]
         values = row["seconds"]
         avg = round(sum(values)/len(values), 3) if values else "N/A"
-        print("{} PASS={}/36 FAIL={} AVG_SUCCESS={}s".format(
-            name, row["PASS"], row["FAIL"], avg))
+        print("{} PASS={}/{} FAIL={} AVG_SUCCESS={}s".format(
+            name, row["PASS"], args.rounds, row["FAIL"], avg))
     after = service_state()
     changes = [svc for svc in PRODUCTION_SERVICES if
                before[svc]["MainPID"] != after[svc]["MainPID"]]
