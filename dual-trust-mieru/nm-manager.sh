@@ -136,6 +136,7 @@ while true;do
   echo ' 11) Autoheal timer details'
   echo ' 12) Replacement candidate status / abort'
   echo ' 13) Adaptive byte-balancing monitor (read-only SHADOW)'
+  echo ' 14) Live 60s connection/byte split + Naive/Mieru latency (READ ONLY)'
   echo '  0) Exit'
   echo
   read -r -p 'Select: ' C || exit 0
@@ -154,6 +155,7 @@ while true;do
     11) autoheal;;
     12) candidate_menu;;
     13) python3 /usr/local/lib/naive-mieru-adaptive/nm-adaptive-core.py --status || true;;
+    14) python3 /usr/local/sbin/nm-live-audit --seconds 60 || true;;
     0) exit 0;;
     *) echo 'Invalid selection';;
   esac
