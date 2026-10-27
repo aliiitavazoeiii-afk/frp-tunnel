@@ -109,6 +109,15 @@ class Swap:
 
     def live_preflight(self):
         expect_active((*self.other_protected, self.live))
+        # Replacing the old single client while the Naive role has already been
+        # swapped to a sharded local gateway would update an UNUSED config.
+        # Fail closed: sharding needs its own coordinated foreign-rotation plan.
+        shard_overlay = pathlib.Path(
+            "/etc/systemd/system/nm-naive-client.service.d/90-naive-shards.conf"
+        )
+        if self.role == "naive" and shard_overlay.exists():
+            error("Naive shards are live; original single-client foreign replacement is unsafe. "
+                  "Rollback Naive sharding during maintenance before using this wizard.")
         if not (STATE.parent/"live-cutover.timestamp").is_file():
             error("Naive production cutover marker missing")
 
