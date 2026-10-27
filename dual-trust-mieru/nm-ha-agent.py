@@ -17,6 +17,12 @@ SERVICE={"naive":"nm-naive-client.service","mieru":"dual-mieru-carrier.service"}
 NODE={"naive":"XUDP-TRUST","mieru":"XUDP-MIERU"}
 AUTO="DUAL-AUTO"
 SELECTOR="DUAL"
+# SHARD_AWARE_HA_V1: NEVER restart the local gateway instead of failed backend.
+SHARD_OVERLAY=pathlib.Path("/etc/systemd/system/nm-naive-client.service.d/90-naive-shards.conf")
+SHARD_PORTS={"a":17993,"b":17994}
+SHARD_UNITS={"a":"nm-naive-shard-a.service","b":"nm-naive-shard-b.service"}
+SHARD_RESTART_COOLDOWN=1800  # seconds; avoid repeated interruptions on flapping links.
+
 
 def iso():
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
@@ -59,6 +65,44 @@ def curl(port,url):
     except (OSError,ValueError,subprocess.TimeoutExpired):
         pass
     return {"ok":False,"ms":None,"code":None}
+def sharding_live():
+    """Allow shard actions ONLY with the precise reviewed live unit override."""
+    if not SHARD_OVERLAY.exists():
+        return False
+    expected=(
+        "ExecStart=/usr/local/lib/dual-trust-mieru/mihomo "
+        "-d /var/lib/dual-trust-mieru/naive-shards/live "
+        "-f /etc/dual-trust-mieru/naive-shards/live.yaml"
+    )
+    contents=SHARD_OVERLAY.read_text()
+    if contents.count(expected)!=1 or "ExecStart=\n" not in contents:
+        raise RuntimeError("Unknown Naive shard gateway override; refuse HA role action")
+    for unit in SHARD_UNITS.values():
+        if subprocess.run(["systemctl","is-active","--quiet",unit],timeout=5).returncode:
+            raise RuntimeError("Missing shard service "+unit+"; no automatic recovery")
+    return True
+
+def probe_shards():
+    """Require BOTH unrelated HTTPS endpoints to fail before marking a shard DOWN."""
+    jobs={}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for name,port in SHARD_PORTS.items():
+            jobs[name,"gstatic"]=pool.submit(curl,port,"https://www.gstatic.com/generate_204")
+            jobs[name,"telegram"]=pool.submit(curl,port,"https://api.telegram.org/")
+        out={}
+        for name in SHARD_PORTS:
+            probes={k:jobs[name,k].result() for k in ("gstatic","telegram")}
+            good=all(x["ok"] for x in probes.values())
+            down=not any(x["ok"] for x in probes.values())
+            out[name]={"health":"HEALTHY" if good else "DOWN" if down else "DEGRADED",
+                       "probes":probes}
+    return out
+
+def shard_defaults():
+    return {name:{"failed_cycles":0,"healthy_cycles":0,"last_restart_epoch":0,
+                  "last_restart_at":None,"incident":0,"status":"UNKNOWN"}
+            for name in SHARD_PORTS}
+
 def probe_all():
     # A failed gstatic alone is not sufficient: also require an independent
     # Telegram failure before classifying a role DOWN.
@@ -99,7 +143,7 @@ def event(s,kind,role=None,detail=None):
     with (STATE/"events.jsonl").open("a") as file:
         file.write(json.dumps(e,separators=(",",":"))+"\n")
     os.chmod(STATE/"events.jsonl",0o600)
-def status_document(s,measurements,selected,policy):
+def status_document(s,measurements,selected,policy,shards=None):
     bundles={"naive":pathlib.Path("/etc/dual-trust-mieru/naive-mieru/bundle.json"),
              "mieru":ROOT/"mieru-bundle.json"}
     ips={}
@@ -124,10 +168,21 @@ def status_document(s,measurements,selected,policy):
                 timeout=4).returncode==0
         except (OSError,subprocess.TimeoutExpired):
             services[service]=False
+    shard_public={}
+    if shards is not None:
+        for name,item in shards.items():
+            prior=s.get("shards",{}).get(name,{})
+            shard_public[name]={"health":item["health"],"probes":item["probes"],
+                                "status":prior.get("status","UNKNOWN"),
+                                "failed_cycles":prior.get("failed_cycles",0),
+                                "last_restart_at":prior.get("last_restart_at"),
+                                "incident":prior.get("incident",0)}
     return {"schema":1,"server_id":os.environ.get("NM_HA_SERVER_ID","maya11"),
             "updated_at":iso(),"services":services,
             "policy":policy,"pool_selection":selected,
             "automatic_failover":policy=="ARMED","roles":roles,
+            "naive_shards":{"mode":"LIVE" if shards is not None else "SINGLE",
+                            "backends":shard_public},
             "last_event_seq":s["sequence"],"recent_events":s.get("events",[])[-60:]}
 def select(target,expected_current):
     g=group()
@@ -151,6 +206,12 @@ def live_once(dry_run=False):
         # Failure to read Controller/credentials fails closed before any restart.
         current=g.get("now","UNKNOWN")
         measurements=probe_all()
+        # Shadow-stage has NO effect on HA. Only the live unit override enables
+        # per-backend shard health/restarts. Shared lock serializes cutover.
+        sharded=sharding_live()
+        shards=probe_shards() if sharded else None
+        if sharded:
+            s.setdefault("shards",shard_defaults())
         for role in ROLES:
             st=s["roles"][role]
             measured=measurements[role]["health"]
@@ -165,10 +226,60 @@ def live_once(dry_run=False):
                 st["failed_cycles"]=0
                 st["healthy_cycles"]=0
         if policy=="ARMED" and not dry_run:
+            if sharded:
+                for name,observation in shards.items():
+                    part=s["shards"].setdefault(name,shard_defaults()[name])
+                    health=observation["health"]
+                    if health=="DOWN":
+                        part["failed_cycles"]=min(100,part["failed_cycles"]+1)
+                        part["healthy_cycles"]=0
+                    elif health=="HEALTHY":
+                        part["healthy_cycles"]=min(100,part["healthy_cycles"]+1)
+                        part["failed_cycles"]=0
+                    else:
+                        part["failed_cycles"]=0
+                        part["healthy_cycles"]=0
+                    peer="b" if name=="a" else "a"
+                    # A single failed shard can be repaired while the other Naive
+                    # shard and independent Mieru are both alive.
+                    eligible=(part["failed_cycles"]>=2
+                              and shards[peer]["health"]=="HEALTHY"
+                              and measurements["mieru"]["health"]=="HEALTHY"
+                              and time.time()-part["last_restart_epoch"]>=SHARD_RESTART_COOLDOWN)
+                    if not eligible:
+                        continue
+                    part["incident"]+=1
+                    part["last_restart_epoch"]=time.time()
+                    part["last_restart_at"]=iso()
+                    event(s,"RESTARTING_NAIVE_SHARD","naive",name)
+                    save(s)  # write attempt before restart, enforce cooldown across crashes
+                    try:
+                        result=subprocess.run(["systemctl","restart",SHARD_UNITS[name]],timeout=15)
+                        time.sleep(3)
+                        checked=probe_shards()[name]
+                        shards[name]=checked
+                        if result.returncode==0 and checked["health"]=="HEALTHY":
+                            part["failed_cycles"]=0
+                            part["healthy_cycles"]=1
+                            event(s,"NAIVE_SHARD_RECOVERED","naive",name)
+                        else:
+                            event(s,"NAIVE_SHARD_STILL_DOWN","naive",name)
+                    except (OSError,subprocess.TimeoutExpired) as exc:
+                        event(s,"NAIVE_SHARD_RESTART_ERROR","naive",name+":"+type(exc).__name__)
+                # Live backend actions may change Naive gateway probe results.
+                measurements["naive"]=probe_all()["naive"]
             for role in ROLES:
                 st=s["roles"][role]
                 peer="mieru" if role=="naive" else "naive"
                 if st["failed_cycles"]<2 or st["restart_attempted"]:
+                    continue
+                if sharded and role=="naive":
+                    # Restarting nm-naive-client would restart ONLY the local
+                    # Mihomo gateway, NOT either actual Naive transport.
+                    # After repeated full-path failures, quarantine normally.
+                    if st["failed_cycles"]==2:
+                        event(s,"NAIVE_SHARDED_GATEWAY_RESTART_SKIPPED",role,
+                              "backend-specific remediation only")
                     continue
                 if measurements[peer]["health"]!="HEALTHY":
                     if st["failed_cycles"]==2:
@@ -217,6 +328,14 @@ def live_once(dry_run=False):
                     st["restart_attempted"]=False
                     st["failed_cycles"]=0
                     event(s,"ROLE_RECOVERED",role)
+        if sharded:
+            for name,obs in shards.items():
+                part=s["shards"][name]
+                current_shard=obs["health"]
+                if part["status"]!=current_shard:
+                    event(s,"NAIVE_SHARD_STATUS_CHANGE","naive",
+                          name+":"+part["status"]+" -> "+current_shard)
+                    part["status"]=current_shard
         for role in ROLES:
             st=s["roles"][role]
             if policy!="ARMED":
@@ -237,7 +356,7 @@ def live_once(dry_run=False):
         s["updated_at"]=iso()
         s["selected"]=current
         save(s)
-        public=status_document(s,measurements,current,policy if not dry_run else "DRY_RUN")
+        public=status_document(s,measurements,current,policy if not dry_run else "DRY_RUN",shards)
         atomic(STATE/"status.json",json.dumps(public,indent=2,sort_keys=True)+"\n")
         print(f"HA {public['updated_at']} {policy} selected={current} "+ 
               " ".join(f"{r}={public['roles'][r]['status']}" for r in ROLES),flush=True)
