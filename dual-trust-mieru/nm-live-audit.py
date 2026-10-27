@@ -179,14 +179,25 @@ def main():
         first = query("/connections")
         counts = meter.push(first["connections"])
         print("ACTIVE BASELINE:", dict(counts), flush=True)
-        until = time.monotonic()+args.seconds
+        started = time.monotonic()
+        until = started + args.seconds
+        next_progress = started + 30
         while True:
             remain = until-time.monotonic()
             if remain <= 0:
                 break
             time.sleep(min(args.interval, remain))
             now = query("/connections")
-            meter.push(now["connections"])
+            current_counts = meter.push(now["connections"])
+            tick = time.monotonic()
+            if tick >= next_progress and tick < until:
+                elapsed = min(args.seconds, round(tick - started))
+                print(f"PROGRESS {elapsed}/{args.seconds}s "
+                      f"active: NAIVE={current_counts['NAIVE']} "
+                      f"MIERU={current_counts['MIERU']}; "
+                      f"new observed: NAIVE={meter.new['NAIVE']} "
+                      f"MIERU={meter.new['MIERU']}", flush=True)
+                next_progress += 30
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print("AUDIT INCOMPLETE: cannot access live Mihomo stats:",type(exc).__name__, file=sys.stderr)
         raise SystemExit(2)
