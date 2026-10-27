@@ -12,7 +12,7 @@ DIR=$BK/$(date -u +%Y%m%dT%H%M%SZ)
 for svc in x-ui dual-dispatcher dual-xudp-bridge nm-naive-client dual-mieru-carrier;do
   systemctl is-active --quiet "$svc.service" || { echo "$svc inactive; refusing management install" >&2;exit 1; }
 done
-for file in nm-cli.sh nm-health.sh nm-manager.sh nm-foreign-wizard.sh;do
+for file in nm-cli.sh nm-health.sh nm-manager.sh nm-foreign-wizard.sh nm-helper.sh;do
   bash -n "$B/$file"
 done
 python3 -m py_compile "$B/nm-replace.py" "$B/nm-stats.py" "$B/nm-pool-balance.py" "$B/nm-live-audit.py"
@@ -33,16 +33,21 @@ install -m 0755 "$B/nm-health.sh" /usr/local/sbin/nm-health
 install -m 0755 "$B/nm-pool-balance.py" /usr/local/sbin/nm-pool-balance
 install -m 0755 "$B/nm-cli.sh" /usr/local/bin/dual
 install -m 0755 "$B/nm-cli.sh" /usr/local/sbin/dual-manager
-# Friendly operator entrypoint; never overwrite a pre-existing unrelated helper.
-if [[ -e /usr/local/bin/helper || -L /usr/local/bin/helper ]]; then
-  if [[ "$(readlink -f /usr/local/bin/helper)" == /usr/local/bin/dual ]]; then
-    echo 'Helper alias already points to dual.'
-  else
-    echo 'NOTICE: /usr/local/bin/helper already exists and is unrelated; preserving it. Use: sudo dual'
-  fi
+# Install dedicated simpler Helper; preserve unrelated commands if name is taken.
+HELPER=/usr/local/bin/helper
+if [[ ! -e "$HELPER" && ! -L "$HELPER" ]]; then
+  install -m 0755 "$B/nm-helper.sh" "$HELPER"
+  echo 'Friendly Helper installed: sudo helper'
+elif [[ -L "$HELPER" && "$(readlink -f "$HELPER")" == /usr/local/bin/dual ]]; then
+  rm -f "$HELPER"
+  install -m 0755 "$B/nm-helper.sh" "$HELPER"
+  echo 'Upgraded existing dual alias to dedicated Helper: sudo helper'
+elif [[ -f "$HELPER" ]] && grep -Fq 'NAIVE + MIERU FRIENDLY HELPER' "$HELPER" 2>/dev/null; then
+  cp -a "$HELPER" "$DIR/helper" || true
+  install -m 0755 "$B/nm-helper.sh" "$HELPER"
+  echo 'Updated friendly Helper: sudo helper'
 else
-  ln -s /usr/local/bin/dual /usr/local/bin/helper
-  echo 'Friendly helper installed: sudo helper'
+  echo 'NOTICE: /usr/local/bin/helper exists and is unrelated; preserving it. Use: sudo dual'
 fi
 echo '=== READ ONLY VERIFICATION ==='
 /usr/local/bin/dual status
