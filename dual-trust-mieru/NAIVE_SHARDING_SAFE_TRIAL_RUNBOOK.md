@@ -54,3 +54,33 @@ Report CPU, memory pressure, TCP retrans/timeouts, Caddy service NRestarts/RSS/F
 
 ## Future work after evidence
 If sharding convincingly helps, update HA logic to be sharding-aware (restart failing Naive shard rather than merely local gateway) before any production cutover, and add long-duration canary measurements. Document tests and provide explicit maintenance rollback.
+
+## Actual first A/B on maya11 and foreign resource evidence
+On foreign didi1 (Naive endpoint), uptime 10h06m, load 0.26, RAM available 1556 MiB / 1967 MiB, Caddy lane3-naive-endpoint PID 9513, NRestarts 0, Caddy 206 FDs, no system listen overflow or drops. System-wide since-boot TCP counters: retrans 111448, TCP timeouts 75075, SYN retrans 73809. These are **cumulative** and not normalized by baseline or causally attributed to Caddy. Do not claim direct proof of filtering or a memory/FD issue.
+
+On the same Iran server with staged shadow :17995 over 24 paired rounds, 2 HTTPS requests per path each round:
+| Path | PASS | AVG successful response | P95 successful response |
+|---|---:|---:|---:|
+| NAIVE_SINGLE production :7993 | 42/48 | 1258ms | 2367ms |
+| NAIVE_SHARDS_SHADOW :17995 | 48/48 | 975ms | 1221ms |
+| MIERU_REFERENCE :7994 | 48/48 | 963ms | 1212ms |
+
+At rounds 4,5,8 single Naive failed both targets; round 6 returned ~4sec. The shadow and Mieru remained clean. This strongly suggests transport-process-state or load sensitivity on production Naive, but **shadow has no real customer load**. Do not treat small synthetic A/B as proof it fixes production.
+
+## Sharding-aware HA now implemented
+- `nm-ha-agent.py` marks live sharding ONLY if `90-naive-shards.conf` is present, matches precise reviewed gateway ExecStart, and both Naive shard units are active.
+- Under live sharding it probes EACH backend independently over Gstatic and Telegram, with events and status under `status.json.naive_shards`.
+- A failing backend can be restarted individually ONLY after two DOWN cycles, when its peer shard AND Mieru are both healthy. Minimum **30 minutes** between automatic restarts of the same backend. Never restart the shared Naive gateway just to remediate an unhealthy upstream client.
+- If both Naive backends fail and Mieru is healthy, the higher-level existing HA Selector may quarantine Naive and select Mieru without restarting the gateway; it restores DUAL-AUTO only after all paths/shards are healthy on three cycles.
+- New event names `RESTARTING_NAIVE_SHARD`, `NAIVE_SHARD_RECOVERED`, `NAIVE_SHARD_STILL_DOWN`, `NAIVE_SHARD_STATUS_CHANGE`. Panel Control Room should display shard status and deduplicate SMS.
+- `nm-naive-shards-maintenance.sh cutover` is protected by a TTY-only confirmation phrase `CUTOVER-NAIVE-SHARDS` and REFUSES absent active shard-aware HA.
+- Tested offline in GitHub Actions; not yet tested on customer's running production.
+
+## Recommended deployment sequence
+1. Ensure isolated shadow stage is still active. **Do not run stage twice.**
+2. Update GitHub checkout to tested pinned commit. Run `nm-install-manager.sh` and `nm-ha-install.sh`; the HA installer atomically replaces the agent executable, does NOT restart x-ui/dispatcher/bridge/carriers and does not reset an active HA timer.
+3. Read-only checks `sudo nm-ha status`, `sudo nm-naive-shards-compare --rounds 120 --gap 3`, `sudo dual health --full all`.
+4. If the shadow remains significantly healthier and Mieru is stable, schedule a short low-traffic maintenance window and run `sudo bash /opt/frp-tunnel-nm/dual-trust-mieru/nm-naive-shards-maintenance.sh cutover`. Explicit operator approval required, with interruption only to existing Naive transport sessions.
+5. Check immediately `sudo dual health --full all`, `sudo nm-ha status`, `sudo bash /opt/frp-tunnel-nm/dual-trust-mieru/nm-naive-shards-maintenance.sh status`. Observe at least ~30–60 minutes of *real traffic* to distinguish true resilience from a green fresh-client shadow.
+6. If degraded, to roll back during maintenance run `sudo bash /opt/frp-tunnel-nm/dual-trust-mieru/nm-naive-shards-maintenance.sh rollback`; another Naive-only restart will interrupt those sessions. Mieru/dispatcher/x-ui are not restarted.
+7. Do NOT claim full HA resilience to a common foreign Caddy outage. For that build second independent Naive foreign+DNS/provider in a later maintenance plan.
