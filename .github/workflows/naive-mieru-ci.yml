@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh
+      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh
       - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
@@ -20,3 +20,21 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify fresh install renders and keeps x-ui untouched
+        run: |
+          python3 - <<'PY'
+          import pathlib, re
+          path=pathlib.Path("dual-trust-mieru/nm-fresh-iran.sh")
+          src=path.read_text()
+          scripts=re.findall(r"^.*<<'PY'\n(.*?)^PY$", src, flags=re.M|re.S)
+          assert len(scripts)==2, f"expected 2 embedded Python scripts, got {len(scripts)}"
+          for i,s in enumerate(scripts):
+              compile(s,f"embedded-{i}.py","exec")
+          assert "systemctl restart x-ui" not in src
+          assert "systemctl stop x-ui" not in src
+          assert "install_trust_client" not in src
+          assert "MULTIPLEXING_OFF" in src
+          assert "lazy: false" in src
+          assert "xudp-trust.internal" in src
+          print("Fresh Naive+Mieru installer: shell/python/safety invariants PASS")
+          PY
