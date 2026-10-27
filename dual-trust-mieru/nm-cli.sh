@@ -22,7 +22,7 @@ status(){
     echo 'Pool: compatibility alias XUDP-TRUST routes to Naive (the strategy above reflects the current saved config)'
   fi
   echo 'Autoheal            : '"$(systemctl is-active dual-tunnel-autoheal.timer 2>/dev/null || true)"
-  echo 'Commands: dual (interactive menu) | dual health --full all | dual status | dual balance-plan | dual adaptive'
+  echo 'Commands: dual (interactive menu) | dual health --full all | dual status | dual balance-plan | dual adaptive | dual audit'
 }
 case "${1:-}" in
   '')
@@ -34,6 +34,7 @@ case "${1:-}" in
   menu) exec /usr/local/lib/naive-mieru-manager/nm-manager.sh ;;
   status) status ;;
   health) shift; exec /usr/local/sbin/nm-health "${1:---quick}" "${2:-all}" ;;
+  audit) shift; exec python3 /usr/local/sbin/nm-live-audit "$@" ;;
   balance-plan) exec /usr/local/sbin/nm-pool-balance --plan ;;
   adaptive)
     echo '=== ADAPTIVE BYTE MONITOR (SHADOW ONLY) ==='
