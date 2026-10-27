@@ -215,7 +215,7 @@ cat >/etc/systemd/system/dual-xudp-bridge.service <<EOF
 [Unit]
 Description=Naive and Mieru split TCP/XUDP bridge
 After=nm-naive-client.service dual-mieru-carrier.service
-Requires=nm-naive-client.service dual-mieru-carrier.service
+Wants=nm-naive-client.service dual-mieru-carrier.service
 [Service]
 Type=simple
 ExecStart=$BIN_DIR/xray run -c $ROOT/xudp.json
@@ -233,7 +233,7 @@ cat >/etc/systemd/system/dual-dispatcher.service <<EOF
 [Unit]
 Description=Naive and Mieru round-robin front SOCKS
 After=dual-xudp-bridge.service
-Requires=dual-xudp-bridge.service
+Wants=dual-xudp-bridge.service
 [Service]
 Type=simple
 WorkingDirectory=$ROOT/dispatcher-data
