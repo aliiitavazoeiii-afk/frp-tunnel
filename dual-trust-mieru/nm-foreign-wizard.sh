@@ -13,6 +13,9 @@ TAG=xudp-trust
 if [[ $ROLE == mieru ]]; then BUNDLE=$CONF/mieru-bundle.json;TAG=xudp-mieru;fi
 [[ -s "$BUNDLE" ]] || { echo 'Missing current role bundle' >&2;exit 1; }
 echo "REPLACE $ROLE: old Foreign remains untouched; only this role may restart after approval."
+echo 'No users are moved until the isolated candidate passes and you confirm cutover.'
+echo 'New Naive foreign needs its own DNS A record + TCP/443; Mieru needs TCP/20000-20020 (or current range).'
+echo 'Verify the new VPS SSH host fingerprint independently; keep old VPS online for rollback.'
 echo '1) Provision NEW foreign VPS by SSH'
 echo '2) Use NEW foreign JSON bundle already on Iran'
 read -r -p 'Option [1/2, anything else cancels]: ' OPT
@@ -61,6 +64,12 @@ apt-get update -y >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates curl jq >/dev/null
 test ! -e /opt/frp-tunnel-nm || exit 1
 git clone --depth 1 -b naive-mieru-live-safe-v1 https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel-nm >/dev/null
+# The live Iran checkout is pinned; the remote branch may have advanced.
+# Fetch the exact Iran-reviewed commit, not an unreviewed moving branch tip.
+if [[ "$(git -C /opt/frp-tunnel-nm rev-parse HEAD)" != "$SHA" ]]; then
+  git -C /opt/frp-tunnel-nm fetch --depth 1 origin "$SHA" >/dev/null
+  git -C /opt/frp-tunnel-nm checkout --detach "$SHA" >/dev/null
+fi
 test "$(git -C /opt/frp-tunnel-nm rev-parse HEAD)" = "$SHA"
 cd /opt/frp-tunnel-nm/dual-trust-mieru
 bash install-foreign-lane3-naive.sh --public-ip "$IP" --domain "$DOMAIN" --email "$EMAIL" --xudp-uuid-file /root/nm-foreign-xudp.uuid --non-interactive
@@ -76,6 +85,12 @@ apt-get update -y >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates curl jq >/dev/null
 test ! -e /opt/frp-tunnel-nm || exit 1
 git clone --depth 1 -b naive-mieru-live-safe-v1 https://github.com/aliiitavazoeiii-afk/frp-tunnel.git /opt/frp-tunnel-nm >/dev/null
+# The live Iran checkout is pinned; the remote branch may have advanced.
+# Fetch the exact Iran-reviewed commit, not an unreviewed moving branch tip.
+if [[ "$(git -C /opt/frp-tunnel-nm rev-parse HEAD)" != "$SHA" ]]; then
+  git -C /opt/frp-tunnel-nm fetch --depth 1 origin "$SHA" >/dev/null
+  git -C /opt/frp-tunnel-nm checkout --detach "$SHA" >/dev/null
+fi
 test "$(git -C /opt/frp-tunnel-nm rev-parse HEAD)" = "$SHA"
 cd /opt/frp-tunnel-nm/dual-trust-mieru
 bash dual-install-foreign.sh --role mieru --public-ip "$IP" --port-range "$RANGE" --xudp-uuid-file /root/nm-foreign-xudp.uuid --non-interactive
