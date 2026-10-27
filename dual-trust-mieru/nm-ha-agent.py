@@ -114,8 +114,19 @@ def status_document(s,measurements,selected,policy):
                      "healthy_cycles":prior["healthy_cycles"],
                      "last_restart_at":prior.get("last_restart_at"),
                      "probes":measurements[role]["probes"],"incident":prior.get("incident",0)}
+    # Local-only service state, without exposing process or authentication details.
+    services={}
+    for service in ("x-ui","dual-dispatcher","dual-xudp-bridge",
+                    "nm-naive-client","dual-mieru-carrier"):
+        try:
+            services[service]=subprocess.run(
+                ["systemctl","is-active","--quiet",service+".service"],
+                timeout=4).returncode==0
+        except (OSError,subprocess.TimeoutExpired):
+            services[service]=False
     return {"schema":1,"server_id":os.environ.get("NM_HA_SERVER_ID","maya11"),
-            "updated_at":iso(),"policy":policy,"pool_selection":selected,
+            "updated_at":iso(),"services":services,
+            "policy":policy,"pool_selection":selected,
             "automatic_failover":policy=="ARMED","roles":roles,
             "last_event_seq":s["sequence"],"recent_events":s.get("events",[])[-12:]}
 def select(target,expected_current):
