@@ -50,6 +50,13 @@ jobs:
           assert 'parser.add_argument("--gap"' in script
           assert 'for n in range(1, args.rounds + 1)' in script
           assert "nm-naive-fresh-client-diagnose.py" in manager
+          assert "nm-naive-shards-maintenance.sh" in manager
+          assert "nm-naive-shards-compare.py" in manager
+          assert "nm-naive-shards-compare --rounds 24" in menu
+          assert 'STAGE-NAIVE' in menu
+          assert "nm-naive-shards-maintenance.sh\" status" in menu
+          replacement=Path("dual-trust-mieru/nm-replace.py").read_text()
+          assert "Naive shards are live" in replacement
           assert "nm-naive-fresh-client-diagnose --rounds 8 --gap 2" in menu
           for forbidden in ("systemctl restart", "systemctl stop", "iptables", "killall", "nft -f"):
               assert forbidden not in script, forbidden
