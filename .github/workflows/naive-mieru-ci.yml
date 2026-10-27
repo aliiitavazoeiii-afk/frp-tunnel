@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh dual-trust-mieru/nm-helper.sh dual-trust-mieru/nm-ha-install.sh
-      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py
+      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh dual-trust-mieru/nm-helper.sh dual-trust-mieru/nm-ha-install.sh dual-trust-mieru/nm-naive-inspect.sh
+      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py dual-trust-mieru/nm-naive-shards-compare.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|nm-naive-client)' dual-trust-mieru/nm-rr-maintenance.sh"
@@ -22,6 +22,23 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify Naive load isolation diagnostics do not touch production
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          ab=Path("dual-trust-mieru/nm-naive-shards-compare.py").read_text()
+          diag=Path("dual-trust-mieru/nm-naive-inspect.sh").read_text()
+          sh=Path("dual-trust-mieru/nm-naive-shards-maintenance.sh").read_text()
+          assert 'NAIVE_SINGLE' in ab and 'NAIVE_SHARDS_SHADOW' in ab
+          assert 'nm-naive-shard-a' in ab and 'nm-naive-staging-gw' in ab
+          assert 'run_one' in ab and 'MIERU_REFERENCE' in ab
+          for src in (ab,diag):
+              for forbidden in ('systemctl restart', 'systemctl stop', 'nft -f', 'iptables -'):
+                  assert forbidden not in src, forbidden
+          assert 'stage) stage' in sh and 'cutover) cutover' in sh
+          assert 'flock -w 20 8' in sh
+          print("Naive independent-shadow A/B diagnostic PASS")
+          PY
       - name: Verify safe fast Naive outage differential helper
         run: |
           python3 - <<'PY'
