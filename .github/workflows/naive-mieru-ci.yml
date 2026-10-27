@@ -11,15 +11,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh
-      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py
+      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|nm-naive-client)' dual-trust-mieru/nm-rr-maintenance.sh"
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh"
       - run: python3 dual-trust-mieru/nm-adaptive-test.py -v
+      - run: python3 dual-trust-mieru/nm-live-audit-test.py -v
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify new live audit is GET-only and installed by manager
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("dual-trust-mieru/nm-live-audit.py").read_text()
+          manager=Path("dual-trust-mieru/nm-install-manager.sh").read_text()
+          cli=Path("dual-trust-mieru/nm-cli.sh").read_text()
+          menu=Path("dual-trust-mieru/nm-manager.sh").read_text()
+          for forbidden in ("systemctl", "PUT", "POST", "DELETE", "iptables", "nft", "killall"):
+              assert forbidden not in src, forbidden
+          assert "nm-live-audit.py" in manager
+          assert "  audit) shift;" in cli
+          assert " 14) Live 60s" in menu
+          print("READ-ONLY live audit and manager integration: PASS")
+          PY
       - name: Verify fresh install renders and keeps x-ui untouched
         run: |
           python3 - <<'PY'
