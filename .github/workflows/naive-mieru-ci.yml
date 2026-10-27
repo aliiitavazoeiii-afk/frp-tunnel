@@ -22,6 +22,23 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify HA shard coordination and approved live cutover guard
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          agent=Path("dual-trust-mieru/nm-ha-agent.py").read_text()
+          cut=Path("dual-trust-mieru/nm-naive-shards-maintenance.sh").read_text()
+          assert "SHARD_AWARE_HA_V1" in agent
+          assert "nm-naive-shard-a.service" in agent
+          assert "nm-naive-shard-b.service" in agent
+          assert "SHARD_RESTART_COOLDOWN=1800" in agent
+          assert "sharding_live()" in agent
+          assert "CUTOVER-NAIVE-SHARDS" in cut
+          assert "grep -Fq 'SHARD_AWARE_HA_V1'" in cut
+          assert "systemctl is-active --quiet nm-ha.timer" in cut
+          assert 'nm-ha status' in cut
+          print("Sharding-aware HA + interactive cutover guard PASS")
+          PY
       - name: Verify Naive load isolation diagnostics do not touch production
         run: |
           python3 - <<'PY'
