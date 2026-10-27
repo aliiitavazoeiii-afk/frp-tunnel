@@ -84,7 +84,7 @@ def base_state():
     return {"schema":1,"sequence":0,"updated_at":None,"selected":"UNKNOWN",
             "roles":{r:{"failed_cycles":0,"healthy_cycles":0,"restart_attempted":False,
                         "status":"UNKNOWN","last_restart_at":None,"incident":0} for r in ROLES},
-            "events":[]}
+            "both_down_alerted":False,"events":[]}
 def load():
     p=STATE/"state.json"
     return json.loads(p.read_text()) if p.exists() else base_state()
@@ -160,7 +160,8 @@ def live_once(dry_run=False):
                 if st["failed_cycles"]<2 or st["restart_attempted"]:
                     continue
                 if measurements[peer]["health"]!="HEALTHY":
-                    event(s,"BOTH_DEGRADED_NO_RESTART",role,"peer not confirmed healthy")
+                    if st["failed_cycles"]==2:
+                        event(s,"PEER_NOT_HEALTHY_NO_RESTART",role,"fail-safe: no blind restart")
                     continue
                 st["restart_attempted"]=True
                 st["incident"]+=1
@@ -179,6 +180,14 @@ def live_once(dry_run=False):
                         event(s,"CARRIER_STILL_DOWN_AFTER_RESTART",role,check["health"])
                 except (OSError,subprocess.TimeoutExpired) as exc:
                     event(s,"CARRIER_RESTART_ERROR",role,type(exc).__name__)
+            # Both down: send exactly one incident event, never endlessly spam panel.
+            all_down=all(s["roles"][r]["failed_cycles"]>=2 for r in ROLES)
+            if all_down and not s.get("both_down_alerted",False):
+                event(s,"BOTH_PATHS_UNAVAILABLE",None,"all role probes failed in consecutive sweeps")
+                s["both_down_alerted"]=True
+            elif not all_down and s.get("both_down_alerted",False):
+                event(s,"AT_LEAST_ONE_PATH_RECOVERED")
+                s["both_down_alerted"]=False
             # Apply selection after all restart attempts; never switch to a sick peer.
             n=s["roles"]["naive"];m=s["roles"]["mieru"]
             failed=[r for r in ROLES if s["roles"][r]["failed_cycles"]>=2]
