@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh
+      - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh dual-trust-mieru/nm-helper.sh
       - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
@@ -21,6 +21,24 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify friendly Helper and SHA-pinned foreign wizard
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          h=Path("dual-trust-mieru/nm-helper.sh").read_text()
+          manager=Path("dual-trust-mieru/nm-install-manager.sh").read_text()
+          wizard=Path("dual-trust-mieru/nm-foreign-wizard.sh").read_text()
+          assert "nm-foreign-wizard.sh\" naive" in h
+          assert "nm-foreign-wizard.sh\" mieru" in h
+          assert "nm-live-audit --seconds 60" in h
+          assert "nm-live-audit --seconds 300" in h
+          assert "systemctl restart" not in h
+          assert 'install -m 0755 "$B/nm-helper.sh"' in manager
+          assert "git -C /opt/frp-tunnel-nm fetch --depth 1 origin" in wizard
+          assert 'test "$(git -C /opt/frp-tunnel-nm rev-parse HEAD)" = "$SHA"' in wizard
+          assert "systemctl restart x-ui" not in wizard
+          print("Friendly Helper + pinned foreign replacement wizard: PASS")
+          PY
       - name: Verify new live audit is GET-only and installed by manager
         run: |
           python3 - <<'PY'
