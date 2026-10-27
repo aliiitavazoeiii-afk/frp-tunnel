@@ -30,7 +30,8 @@ class HATests(unittest.TestCase):
             self.selected=target
             return target
         def fake_run(cmd,**kwargs):
-            self.role_restart.append(cmd)
+            if cmd[:2]==["systemctl","restart"]:
+                self.role_restart.append(cmd)
             return subprocess.CompletedProcess(cmd,0)
         for attr,value in [("group",fakegroup),("select",fake_select),
                            ("validate_services",lambda:None)]:
