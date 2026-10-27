@@ -9,7 +9,7 @@ LIB=/usr/local/lib/naive-mieru-manager
 CONF=/etc/dual-trust-mieru/iran
 NAIVE=/etc/dual-trust-mieru/naive-mieru/bundle.json
 MIERU=$CONF/mieru-bundle.json
-for f in "$LIB/nm-foreign-wizard.sh" "$LIB/nm-replace.py" /usr/local/sbin/nm-health /usr/local/sbin/nm-live-audit; do
+for f in "$LIB/nm-foreign-wizard.sh" "$LIB/nm-replace.py" /usr/local/sbin/nm-health /usr/local/sbin/nm-live-audit /usr/local/sbin/nm-naive-fresh-client-diagnose; do
   [[ -s "$f" ]] || { echo "Missing installed manager: $f"; exit 1; }
 done
 
@@ -50,6 +50,7 @@ header(){
   echo '  7) Recent warning/error logs (last 30 minutes)'
   echo '  8) Replacement candidate status / safe abort'
   echo '  9) Advanced original manager menu'
+  echo ' 10) Diagnose live Naive vs fresh isolated client (NO RESTART)'
   echo '  0) Exit'
   echo
   echo ' Foreign replacement first tests an isolated candidate;'
@@ -83,7 +84,7 @@ logs(){
 }
 while true; do
   header
-  read -r -p 'Choose 0-9: ' choice || exit 0
+  read -r -p 'Choose 0-10: ' choice || exit 0
   echo
   case "$choice" in
     1) /usr/local/bin/dual status || true ;;
@@ -95,6 +96,7 @@ while true; do
     7) logs ;;
     8) candidates || true ;;
     9) bash "$LIB/nm-manager.sh" || true ;;
+    10) python3 /usr/local/sbin/nm-naive-fresh-client-diagnose --rounds 8 --gap 2 || true ;;
     0) echo 'Helper closed; tunnel services left running.'; exit 0 ;;
     *) echo 'Unknown selection.' ;;
   esac
