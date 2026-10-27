@@ -23,13 +23,15 @@ jobs:
       - name: Verify fresh install renders and keeps x-ui untouched
         run: |
           python3 - <<'PY'
-          import pathlib, re
+          import pathlib
           path=pathlib.Path("dual-trust-mieru/nm-fresh-iran.sh")
           src=path.read_text()
-          scripts=re.findall(r"^[^\\n]*<<'PY'\n(.*?)^PY$", src, flags=re.M|re.S)
-          assert len(scripts)==2, f"expected 2 embedded Python scripts, got {len(scripts)}"
-          for i,s in enumerate(scripts):
-              compile(s,f"embedded-{i}.py","exec")
+          lines=src.splitlines()
+          starts=[i for i,line in enumerate(lines) if "<<'PY'" in line]
+          assert len(starts)==2, f"expected 2 embedded Python scripts, got {len(starts)}"
+          for i,start in enumerate(starts):
+              end=lines.index("PY",start+1)
+              compile(chr(10).join(lines[start+1:end]),f"embedded-{i}.py","exec")
           assert "systemctl restart x-ui" not in src
           assert "systemctl stop x-ui" not in src
           assert "install_trust_client" not in src
