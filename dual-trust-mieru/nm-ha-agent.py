@@ -3,7 +3,7 @@
 No x-ui, XUDP bridge, or dispatcher service restarts. Fail closed on uncertainty.
 """
 import argparse, concurrent.futures, datetime as dt, fcntl, json, os, pathlib, subprocess
-import tempfile, time, urllib.error, urllib.request
+import tempfile, time, urllib.error, urllib.request, sys
 
 ROOT=pathlib.Path("/etc/dual-trust-mieru/iran")
 STATE=pathlib.Path("/var/lib/dual-trust-mieru/naive-mieru/ha")
@@ -128,7 +128,7 @@ def status_document(s,measurements,selected,policy):
             "updated_at":iso(),"services":services,
             "policy":policy,"pool_selection":selected,
             "automatic_failover":policy=="ARMED","roles":roles,
-            "last_event_seq":s["sequence"],"recent_events":s.get("events",[])[-12:]}
+            "last_event_seq":s["sequence"],"recent_events":s.get("events",[])[-60:]}
 def select(target,expected_current):
     g=group()
     if not armed(g):
@@ -259,6 +259,14 @@ def bootstrap(allow_live=False):
         if active and not allow_live:
             raise RuntimeError(f"{len(active)} active dispatcher flows; refusing first-time reload. "
                 "Retry during zero flows or use --allow-active-reload after accepting session interruption.")
+        if active and allow_live:
+            if not sys.stdin.isatty():
+                raise RuntimeError("Active session reload requires an interactive terminal confirmation")
+            print(f"WARNING: {len(active)} active connections. One-time dispatcher config reload")
+            print("MAY INTERRUPT EXISTING USER SESSIONS, including BOTH Naive and Mieru.")
+            answer=input("Type RELOAD-WITH-ACTIVE-USERS to accept this one-time risk: ").strip()
+            if answer!="RELOAD-WITH-ACTIVE-USERS":
+                raise RuntimeError("Live bootstrap canceled; production untouched")
         source=CONFIG.read_text()
         start=source.index("proxy-groups:\n")
         end=source.index("rules:\n",start)
