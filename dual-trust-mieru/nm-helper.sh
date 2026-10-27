@@ -51,6 +51,7 @@ header(){
   echo '  8) Replacement candidate status / safe abort'
   echo '  9) Advanced original manager menu'
   echo ' 10) Diagnose live Naive vs fresh isolated client (NO RESTART)'
+  echo ' 11) HA auto-failover status / timer (READ ONLY)'
   echo '  0) Exit'
   echo
   echo ' Foreign replacement first tests an isolated candidate;'
@@ -84,7 +85,7 @@ logs(){
 }
 while true; do
   header
-  read -r -p 'Choose 0-10: ' choice || exit 0
+  read -r -p 'Choose 0-11: ' choice || exit 0
   echo
   case "$choice" in
     1) /usr/local/bin/dual status || true ;;
@@ -97,6 +98,8 @@ while true; do
     8) candidates || true ;;
     9) bash "$LIB/nm-manager.sh" || true ;;
     10) python3 /usr/local/sbin/nm-naive-fresh-client-diagnose --rounds 8 --gap 2 || true ;;
+    11) if [[ -x /usr/local/sbin/nm-ha ]]; then /usr/local/sbin/nm-ha status; else echo 'HA agent not yet installed'; fi
+        systemctl list-timers nm-ha.timer nm-ha-telemetry.timer --all --no-pager || true ;;
     0) echo 'Helper closed; tunnel services left running.'; exit 0 ;;
     *) echo 'Unknown selection.' ;;
   esac
