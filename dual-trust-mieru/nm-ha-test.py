@@ -34,6 +34,7 @@ class HATests(unittest.TestCase):
                 self.role_restart.append(cmd)
             return subprocess.CompletedProcess(cmd,0)
         for attr,value in [("group",fakegroup),("select",fake_select),
+                           ("sharding_live",lambda:False),
                            ("validate_services",lambda:None)]:
             x=mock.patch.object(ha,attr,value);x.start();self.addCleanup(x.stop)
         y=mock.patch.object(ha.subprocess,"run",fake_run);y.start();self.addCleanup(y.stop)
@@ -44,6 +45,39 @@ class HATests(unittest.TestCase):
         try:ha.live_once()
         finally:x.stop()
         return ha.load()
+    def shard_cycle(self,n,m,shard_a="HEALTHY",shard_b="HEALTHY"):
+        def record(status):
+            return {"health":status,"probes":{
+                key:{"ok":status=="HEALTHY","ms":320,"code":204}
+                for key in ("gstatic","telegram")}}
+        with mock.patch.object(ha,"sharding_live",lambda:True), \
+             mock.patch.object(ha,"probe_shards",
+                               lambda:{"a":record(shard_a),"b":record(shard_b)}):
+            return self.cycle(n,m)
+    def test_shard_a_restarted_without_gateway_or_mieru_restart(self):
+        self.shard_cycle("HEALTHY","HEALTHY","DOWN","HEALTHY")
+        self.assertEqual(self.role_restart,[])
+        s=self.shard_cycle("HEALTHY","HEALTHY","DOWN","HEALTHY")
+        self.assertEqual(self.role_restart,[["systemctl","restart","nm-naive-shard-a.service"]])
+        self.assertEqual(self.selected,"DUAL-AUTO")
+        self.assertEqual(s["shards"]["a"]["incident"],1)
+        self.shard_cycle("HEALTHY","HEALTHY","DOWN","HEALTHY")
+        self.assertEqual(len(self.role_restart),1,"30-minute persisted shard cooldown")
+    def test_two_shards_down_failover_but_no_gateway_restart(self):
+        self.shard_cycle("DOWN","HEALTHY","DOWN","DOWN")
+        s=self.shard_cycle("DOWN","HEALTHY","DOWN","DOWN")
+        self.assertEqual(self.role_restart,[],"never restart gateway or both down shards blindly")
+        self.assertEqual(self.selected,"XUDP-MIERU")
+        self.assertEqual(s["roles"]["naive"]["status"],"QUARANTINED")
+    def test_sharded_recovery_requires_healthy_independent_backends(self):
+        self.shard_cycle("DOWN","HEALTHY","DOWN","DOWN")
+        self.shard_cycle("DOWN","HEALTHY","DOWN","DOWN")
+        for _ in range(4):
+            self.shard_cycle("HEALTHY","HEALTHY","HEALTHY","DOWN")
+        self.assertEqual(self.selected,"XUDP-MIERU")
+        for _ in range(3):
+            self.shard_cycle("HEALTHY","HEALTHY","HEALTHY","HEALTHY")
+        self.assertEqual(self.selected,"DUAL-AUTO")
     def test_healthy_never_restarts_or_selects(self):
         for i in range(4): s=self.cycle("HEALTHY","HEALTHY")
         self.assertEqual(self.selected,"DUAL-AUTO")
