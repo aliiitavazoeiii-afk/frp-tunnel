@@ -12,10 +12,10 @@ DIR=$BK/$(date -u +%Y%m%dT%H%M%SZ)
 for svc in x-ui dual-dispatcher dual-xudp-bridge nm-naive-client dual-mieru-carrier;do
   systemctl is-active --quiet "$svc.service" || { echo "$svc inactive; refusing management install" >&2;exit 1; }
 done
-for file in nm-cli.sh nm-health.sh nm-manager.sh nm-foreign-wizard.sh nm-helper.sh;do
+for file in nm-cli.sh nm-health.sh nm-manager.sh nm-foreign-wizard.sh nm-helper.sh nm-naive-shards-maintenance.sh nm-naive-inspect.sh;do
   bash -n "$B/$file"
 done
-python3 -m py_compile "$B/nm-replace.py" "$B/nm-stats.py" "$B/nm-pool-balance.py" "$B/nm-live-audit.py" "$B/nm-naive-fresh-client-diagnose.py"
+python3 -m py_compile "$B/nm-replace.py" "$B/nm-stats.py" "$B/nm-pool-balance.py" "$B/nm-live-audit.py" "$B/nm-naive-fresh-client-diagnose.py" "$B/nm-naive-shards-compare.py"
 test -s "$B/nm-replace.py"
 test -s "$B/nm-stats.py"
 mkdir -p "$ROOT" "$DIR"
@@ -26,6 +26,9 @@ done
 echo '=== INSTALL NAIVE/MIERU MANAGER (NO SERVICE RESTART) ==='
 install -m 0755 "$B/nm-manager.sh" "$ROOT/nm-manager.sh"
 install -m 0755 "$B/nm-foreign-wizard.sh" "$ROOT/nm-foreign-wizard.sh"
+install -m 0755 "$B/nm-naive-shards-maintenance.sh" "$ROOT/nm-naive-shards-maintenance.sh"
+install -m 0755 "$B/nm-naive-inspect.sh" "$ROOT/nm-naive-inspect.sh"
+install -m 0755 "$B/nm-naive-shards-compare.py" /usr/local/sbin/nm-naive-shards-compare
 install -m 0755 "$B/nm-replace.py" "$ROOT/nm-replace.py"
 install -m 0755 "$B/nm-stats.py" "$ROOT/nm-stats.py"
 install -m 0755 "$B/nm-live-audit.py" /usr/local/sbin/nm-live-audit
