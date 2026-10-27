@@ -169,6 +169,14 @@ restore(){
   alive nm-naive-client && probe 7993 3
 }
 cutover(){
+  # Never expose live Naive clients to the old gateway-only HA behavior.
+  # Installed Python must be the reviewed shard-aware version first.
+  [[ -t 0 && -t 1 ]] || die 'interactive TTY required for live cutover'
+  [[ -x /usr/local/sbin/nm-ha ]] || die 'HA agent not installed'
+  grep -Fq 'SHARD_AWARE_HA_V1' /usr/local/sbin/nm-ha ||
+    die 'installed HA is not shard-aware; upgrade HA before cutover'
+  systemctl is-active --quiet nm-ha.timer ||
+    die 'HA timer not running; verify protective failover before cutover'
   services
   alive nm-naive-client || die 'original live Naive is down'
   [[ ! -e "$O" && -s "$R/live.yaml" && -s "$R/stage-port" ]] || die 'no healthy stage or already cut over'
@@ -182,6 +190,11 @@ cutover(){
   probe "$stage_port" 8 || die 'staging gateway unhealthy'
   probe 7994 4 || die 'Mieru unhealthy; cutover blocked'
   "$B/mihomo" -t -d "$D/live" -f "$R/live.yaml" >/dev/null || die 'gateway config invalid'
+  echo 'WARNING: LIVE Naive :7993 will switch from the single Client to'
+  echo 'a two-client gateway. Existing Naive TCP sessions will reconnect.'
+  echo 'Mieru remains untouched, but no zero-loss guarantee is possible.'
+  read -r -p 'Type CUTOVER-NAIVE-SHARDS to proceed (anything else cancels): ' APPROVAL
+  [[ "$APPROVAL" == CUTOVER-NAIVE-SHARDS ]] || die 'cutover canceled; production unchanged'
   exec 8>/run/dual-trust-mieru-autoheal.lock
   flock -w 20 8 || die 'autoheal busy'
   local before
@@ -207,6 +220,13 @@ EOF
     die 'cutover postflight failed'
   fi
   [[ "$(pids)" == "$before" ]] || log 'WARNING: protected service PID changed externally'
+  # Extra HA smoke test is read-only and must recognize live sharding.
+  # Do not abort a successful switch on one transient HA probe error.
+  if /usr/local/sbin/nm-ha status 2>/dev/null | grep -q '"policy": "ARMED"'; then
+    log 'Existing HA is armed; shard-specific monitoring will begin next timer cycle.'
+  else
+    log 'WARNING: cannot verify armed HA status; check systemctl status nm-ha.timer'
+  fi
   # Staging gateway is no longer needed after successful live takeover.
   systemctl disable --now nm-naive-staging-gw.service >/dev/null ||
     log "WARNING: staging gateway remains on isolated :$stage_port; production unaffected"
