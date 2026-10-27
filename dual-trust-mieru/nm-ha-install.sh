@@ -13,8 +13,14 @@ python3 -m py_compile "$B/nm-ha-agent.py" "$B/nm-ha-telemetry.py"
 mkdir -p "$STATE"
 chmod 0700 "$STATE"
 if [[ -f /usr/local/sbin/nm-ha ]];then cp -a /usr/local/sbin/nm-ha "$STATE/previous-nm-ha-$(date -u +%Y%m%dT%H%M%SZ)";fi
-install -m 0755 "$B/nm-ha-agent.py" /usr/local/sbin/nm-ha
-install -m 0755 "$B/nm-ha-telemetry.py" /usr/local/sbin/nm-ha-telemetry
+# Timers may be active: upgrade executables by atomic rename so they never
+# execute a half-written Python file. Both temporary files live on same FS.
+for entry in "nm-ha-agent.py:nm-ha" "nm-ha-telemetry.py:nm-ha-telemetry";do
+  src=${entry%%:*}; dest=${entry#*:}
+  tmp=$(mktemp "/usr/local/sbin/.${dest}.XXXXXXXX")
+  install -m 0755 "$B/$src" "$tmp"
+  mv -f "$tmp" "/usr/local/sbin/$dest"
+done
 for unit in nm-ha.service nm-ha.timer nm-ha-telemetry.service nm-ha-telemetry.timer;do
   if [[ -e /etc/systemd/system/$unit ]];then
      grep -Fq 'NAIVE-MIERU-HA-MANAGED' "/etc/systemd/system/$unit" ||
@@ -77,9 +83,17 @@ UNIT
 systemd-analyze verify /etc/systemd/system/nm-ha.service /etc/systemd/system/nm-ha.timer \
  /etc/systemd/system/nm-ha-telemetry.service /etc/systemd/system/nm-ha-telemetry.timer >/dev/null
 systemctl daemon-reload
-echo '=== READ ONLY SMOKE TEST (NO RESTART, NO POOL CHANGES) ==='
-/usr/local/sbin/nm-ha dry-run
-echo 'SUCCESS: agent + systemd units installed but timers NOT enabled.'
+echo '=== NON-DISRUPTIVE HA VERIFICATION (NO RESTART, NO POOL CHANGES) ==='
+if systemctl is-active --quiet nm-ha.timer;then
+  # Production HA is already running: do not mutate live status/counters by
+  # sending a dry-run. New code is picked up automatically on the next tick.
+  /usr/local/sbin/nm-ha status
+  echo 'HA timer already active; left enabled without interruption.'
+else
+  /usr/local/sbin/nm-ha dry-run
+  echo 'HA timer is not active; bootstrap and enable it separately if intended.'
+fi
+echo 'SUCCESS: HA code installed without restarting production services.'
 echo 'First-time DUAL Selector bootstrap is explicitly separate and can affect existing user connections.'
 echo 'If user traffic exists, activation refuses unless you explicitly opt into the one-time live reload.'
 echo 'To activate when connections=0: sudo nm-ha bootstrap && sudo systemctl enable --now nm-ha.timer'
