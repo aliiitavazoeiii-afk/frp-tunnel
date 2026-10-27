@@ -21,6 +21,22 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify safe fast Naive outage differential helper
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          script=Path("dual-trust-mieru/nm-naive-fresh-client-diagnose.py").read_text()
+          manager=Path("dual-trust-mieru/nm-install-manager.sh").read_text()
+          menu=Path("dual-trust-mieru/nm-helper.sh").read_text()
+          assert 'parser.add_argument("--rounds"' in script
+          assert 'parser.add_argument("--gap"' in script
+          assert 'for n in range(1, args.rounds + 1)' in script
+          assert "nm-naive-fresh-client-diagnose.py" in manager
+          assert "nm-naive-fresh-client-diagnose --rounds 8 --gap 2" in menu
+          for forbidden in ("systemctl restart", "systemctl stop", "iptables", "killall", "nft -f"):
+              assert forbidden not in script, forbidden
+          print("Naive read-only outage differential: PASS")
+          PY
       - name: Verify friendly Helper and SHA-pinned foreign wizard
         run: |
           python3 - <<'PY'
