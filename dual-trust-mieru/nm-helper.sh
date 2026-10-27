@@ -52,6 +52,9 @@ header(){
   echo '  9) Advanced original manager menu'
   echo ' 10) Diagnose live Naive vs fresh isolated client (NO RESTART)'
   echo ' 11) HA auto-failover status / timer (READ ONLY)'
+  echo ' 12) Prepare two isolated Naive clients (SHADOW ONLY)'
+  echo ' 13) Compare current Naive against staged two-client gateway'
+  echo ' 14) Naive shards stage/status (READ ONLY)'
   echo '  0) Exit'
   echo
   echo ' Foreign replacement first tests an isolated candidate;'
@@ -85,7 +88,7 @@ logs(){
 }
 while true; do
   header
-  read -r -p 'Choose 0-11: ' choice || exit 0
+  read -r -p 'Choose 0-14: ' choice || exit 0
   echo
   case "$choice" in
     1) /usr/local/bin/dual status || true ;;
@@ -100,6 +103,14 @@ while true; do
     10) python3 /usr/local/sbin/nm-naive-fresh-client-diagnose --rounds 8 --gap 2 || true ;;
     11) if [[ -x /usr/local/sbin/nm-ha ]]; then /usr/local/sbin/nm-ha status; else echo 'HA agent not yet installed'; fi
         systemctl list-timers nm-ha.timer nm-ha-telemetry.timer --all --no-pager || true ;;
+    12) echo 'Staging starts 2 EXTRA Naive client processes and a LOCAL TEST gateway.'
+        echo 'It DOES NOT replace the currently serving :7993 Naive client.'
+        read -r -p 'Type STAGE-NAIVE to begin isolated staging: ' ANSWER
+        if [[ "$ANSWER" == STAGE-NAIVE ]]; then
+          bash "$LIB/nm-naive-shards-maintenance.sh" stage || true
+        else echo 'Cancelled'; fi ;;
+    13) python3 /usr/local/sbin/nm-naive-shards-compare --rounds 24 --gap 2 || true ;;
+    14) bash "$LIB/nm-naive-shards-maintenance.sh" status || true ;;
     0) echo 'Helper closed; tunnel services left running.'; exit 0 ;;
     *) echo 'Unknown selection.' ;;
   esac
