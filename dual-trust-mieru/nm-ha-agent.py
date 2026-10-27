@@ -212,6 +212,10 @@ def live_once(dry_run=False):
         shards=probe_shards() if sharded else None
         if sharded:
             s.setdefault("shards",shard_defaults())
+            # A passing gateway probe can conceal one failed backend under RR.
+            # Reflect underlying degradation without falsely declaring total DOWN.
+            if any(shards[x]["health"]!="HEALTHY" for x in SHARD_PORTS) and measurements["naive"]["health"]=="HEALTHY":
+                measurements["naive"]["health"]="DEGRADED"
         for role in ROLES:
             st=s["roles"][role]
             measured=measurements[role]["health"]
@@ -268,6 +272,11 @@ def live_once(dry_run=False):
                         event(s,"NAIVE_SHARD_RESTART_ERROR","naive",name+":"+type(exc).__name__)
                 # Live backend actions may change Naive gateway probe results.
                 measurements["naive"]=probe_all()["naive"]
+                if any(shards[x]["health"]!="HEALTHY" for x in SHARD_PORTS) and measurements["naive"]["health"]=="HEALTHY":
+                    measurements["naive"]["health"]="DEGRADED"
+                if measurements["naive"]["health"]=="HEALTHY":
+                    s["roles"]["naive"]["failed_cycles"]=0
+                    s["roles"]["naive"]["healthy_cycles"]=max(1,s["roles"]["naive"]["healthy_cycles"])
             for role in ROLES:
                 st=s["roles"][role]
                 peer="mieru" if role=="naive" else "naive"
@@ -317,7 +326,9 @@ def live_once(dry_run=False):
             wanted=current
             if len(failed)==1 and len(good)==1 and failed[0]!=good[0]:
                 wanted=NODE[good[0]]
-            elif len(good)==2 and all(s["roles"][r]["healthy_cycles"]>=3 for r in ROLES):
+            elif (len(good)==2
+                  and all(s["roles"][r]["healthy_cycles"]>=3 for r in ROLES)
+                  and (not sharded or all(s["shards"][name]["healthy_cycles"]>=3 for name in SHARD_PORTS))):
                 wanted=AUTO
             if wanted!=current:
                 current=select(wanted,current)
