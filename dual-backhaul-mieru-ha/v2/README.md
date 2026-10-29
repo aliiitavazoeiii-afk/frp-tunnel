@@ -1,5 +1,10 @@
 # Dual HA v2 staging — Custom Backhaul V2 + Mieru TCP
 
+## Operational Helper — NEW
+
+For the running dual-tunnel setup, see [DUAL_HELPER.md](DUAL_HELPER.md): install `sudo dual` on Iran, inspect real HTTPS health and HAProxy traffic stats, deploy fresh foreign nodes with one role-selecting installer, and stage/replace Backhaul or Mieru foreign IPs with backup and rollback. The helper **does not** change 3x-ui/REALITY or port 443. Foreign replacement is not zero-downtime for existing TCP connections and requires authorized root SSH key access to both old and candidate hosts.
+
+
 **Dedicated foreign hosts:** Backhaul V2 \`152.237.230.159\`; Mieru TCP \`152.237.230.248\`.
 **Current Iran users:** Reality/X-UI on public TCP/443. **Do not change the existing inbound, UUID, Reality key, fingerprint, or user config.**
 
