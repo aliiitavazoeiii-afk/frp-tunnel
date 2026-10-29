@@ -29,7 +29,7 @@ PATHS=(("NAIVE",7991),("MIERU",7992),("MIERU_NATIVE",7994),("DUAL",7990))
 DNS_RESOLVERS=("1.1.1.1","8.8.8.8")
 # Public Telegram DC IPv4 test endpoints, not private user/chat addresses.
 # SOCKS CONNECT proves TCP reachability only, NOT MTProto authentication.
-TG_DC_IPS=("149.154.167.50","149.154.167.91")
+TG_DC_IPS=("149.154.167.51","149.154.167.91")
 STAGES={7:"connection",28:"timeout",35:"SSL handshake",52:"empty response",
         56:"read error",60:"certificate error",97:"proxy error"}
 
