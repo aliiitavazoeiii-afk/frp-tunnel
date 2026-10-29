@@ -295,6 +295,10 @@ def safety_checks(role: str, new_ip: str, *, check_ssh: bool = True) -> str:
         raise RuntimeError("Other HA path not confirmed healthy/fresh; rotation not safe")
     if not all(status(SERVICES[k]) == "active" for k in ("x-ui", "gateway", "health", other)):
         raise RuntimeError("Core live services are not all active; abort before any change")
+    # Do not rely solely on a controller snapshot if replacing a production tunnel.
+    direct = outbound_probe(PORTS[other], TARGETS[0][1], 200, max_seconds=10)
+    if not direct.get("ok") or direct.get("ip") != ips[other]:
+        raise RuntimeError("Other HA tunnel did not pass live HTTPS public-IP check; rotation aborted")
     if check_ssh:
         for ip in (old_ip, new_ip):
             try:
@@ -401,6 +405,9 @@ def replace_mieru(old_ip: str, new_ip: str, w: Path) -> None:
         user, password = candidate_mieru_bundle(candidate, new_ip)
         if not tcp_probe(new_ip, 28443, timeout=5):
             raise RuntimeError("New Mita TCP/28443 unreachable from Iran; old Mieru remains active")
+        survivor = outbound_probe(PORTS["backhaul"], TARGETS[0][1], 200, max_seconds=10)
+        if not survivor.get("ok") or survivor.get("ip") != active_ips()["backhaul"]:
+            raise RuntimeError("Backhaul survivor became unhealthy during staging; refusing Mieru switch")
         print("  New Mita running and TCP reachable; switching ONLY Iran Mieru client...")
         cfg = read_mieru()
         try:
@@ -454,7 +461,12 @@ def ufw_allow_new(ip: str) -> bool:
     if shutil.which("ufw") is None:
         return False
     res = run(["ufw", "status"], check=False)
-    if "Status: active" not in res.stdout.decode(errors="replace"):
+    output = res.stdout.decode(errors="replace")
+    if "Status: active" not in output:
+        return False
+    if any(ip in line and "18443" in line and "ALLOW" in line
+           for line in output.splitlines()):
+        print("  UFW already has a candidate-specific TCP/18443 ALLOW entry; preserving it.")
         return False
     # Avoid changing any old UFW rules. Only add one explicitly tagged rule.
     run(["ufw", "allow", "from", ip, "to", "any", "port", "18443",
@@ -479,6 +491,10 @@ def replace_backhaul(old_ip: str, new_ip: str, w: Path) -> None:
     try:
         prepped_remote_install("backhaul", new_ip, candidate)
         opened = ufw_allow_new(new_ip)
+        # Re-check the surviving path directly after new-host installation.
+        healthy = outbound_probe(PORTS["mieru"], TARGETS[0][1], 200, max_seconds=10)
+        if not healthy.get("ok") or healthy.get("ip") != active_ips()["mieru"]:
+            raise RuntimeError("Mieru survivor became unhealthy during staging; refusing Backhaul switch")
         print(color("  READY: old Backhaul is still live. Switching reverse client now...", "1;33"))
         old_stop_attempted = True
         ssh(old_ip, "systemctl stop dual-ha-backhaul-client", timeout=25)
