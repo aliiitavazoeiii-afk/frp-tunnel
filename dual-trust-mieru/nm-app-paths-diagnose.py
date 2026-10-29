@@ -27,6 +27,9 @@ TARGETS=(
 )
 PATHS=(("NAIVE",7991),("MIERU",7992),("MIERU_NATIVE",7994),("DUAL",7990))
 DNS_RESOLVERS=("1.1.1.1","8.8.8.8")
+# Public Telegram DC IPv4 test endpoints, not private user/chat addresses.
+# SOCKS CONNECT proves TCP reachability only, NOT MTProto authentication.
+TG_DC_IPS=("149.154.167.50","149.154.167.91")
 STAGES={7:"connection",28:"timeout",35:"SSL handshake",52:"empty response",
         56:"read error",60:"certificate error",97:"proxy error"}
 
@@ -62,6 +65,20 @@ def run_http(target,port,limit):
         return {"name":label,"port":port,"status":"ERR_TIMEOUT","code":0,
                 "bytes":0,"ms":round((time.monotonic()-started)*1000),
                 "cause":"timeout"}
+def telegram_dc_connect(mod,port,dest,timeout):
+    control=None
+    start=time.monotonic()
+    try:
+        control,_,_=mod.socks_control(port,1,dest,443,timeout)
+        return {"proxy":port,"dc":dest,"ok":True,
+                "ms":round((time.monotonic()-start)*1000),"error":""}
+    except (OSError,RuntimeError,socket.timeout) as exc:
+        return {"proxy":port,"dc":dest,"ok":False,
+                "ms":round((time.monotonic()-start)*1000),
+                "error":str(exc)[:60]}
+    finally:
+        if control is not None:control.close()
+
 def load_diag():
     file=pathlib.Path(__file__).with_name("nm-mieru-udp-diagnose.py")
     if not file.is_file():raise RuntimeError("companion UDP diagnostics missing")
@@ -126,9 +143,22 @@ def run_test(rounds,timeout):
             hits=[r for r in http_results if r["port"]==port and r["name"]==name]
             summary=" ".join(f"{r['status']}:{r['ms']}ms:{r['bytes']}B" for r in hits)
             print(" ",f"{name:<12}",summary,flush=True)
+    print("\n=== TELEGRAM MTProto TCP443 REACHABILITY ===",flush=True)
+    print("This only tests SOCKS TCP CONNECT to sample Telegram DCs, not app login/messages.")
+    mod=load_diag()
+    dc_jobs=[(port,dest) for _,port in PATHS for dest in TG_DC_IPS for _ in range(rounds)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        dc_results=list(executor.map(lambda x:telegram_dc_connect(mod,x[0],x[1],timeout),
+                                     dc_jobs))
+    for name,port in PATHS:
+        print(f" {name} :{port}",flush=True)
+        for dc in TG_DC_IPS:
+            hit=[x for x in dc_results if x["proxy"]==port and x["dc"]==dc]
+            count=sum(x["ok"] for x in hit)
+            print(f"  {dc} :443 {count}/{len(hit)} "+
+                  " ".join("PASS" if x["ok"] else "FAIL:"+x["error"] for x in hit),flush=True)
     print("\n=== UDP SMALL vs LARGE DNS PACKET PROBES ===")
     print("1200B is a synthetic padded DNS request, NOT a real QUIC/Telegram handshake.")
-    mod=load_diag()
     udp_jobs=[(p,ip,pad) for _,p in PATHS for ip in DNS_RESOLVERS
               for pad in (0,1200) for _ in range(rounds)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
