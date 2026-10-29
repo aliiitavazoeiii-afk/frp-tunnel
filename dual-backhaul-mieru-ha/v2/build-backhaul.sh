@@ -24,6 +24,29 @@ RAW=https://raw.githubusercontent.com/aliiitavazoeiii-afk/backhaul-ha-installer
 # Never silently accept a different toolchain or an unverified archive.
 GO=""
 GOFMT=""
+
+# Ubuntu 24.04's signed APT repository ships exactly Go 1.23.1.
+# Use it first to avoid blocked go.dev/dl and proxy.golang.org toolchain hosts.
+if apt-cache show golang-1.23-go >/dev/null 2>&1; then
+  echo "[i] Trying Ubuntu-signed Go 1.23.1 package (golang-1.23-go)..."
+  if apt-get install -y golang-1.23-go; then
+    CANDIDATE=/usr/lib/go-1.23/bin/go
+    CANDIDATE_FMT=/usr/lib/go-1.23/bin/gofmt
+    if [[ -x "$CANDIDATE" && -x "$CANDIDATE_FMT" ]] &&
+        "$CANDIDATE" version | grep -q ' go1[.]23[.]1 '; then
+      GO="$CANDIDATE"
+      GOFMT="$CANDIDATE_FMT"
+      export GOTOOLCHAIN=local
+      export GOPROXY=https://proxy.golang.org,direct
+      echo "[+] Verified Ubuntu Go toolchain: $("$GO" version)"
+    else
+      echo "[!] Ubuntu Go package is not exactly 1.23.1. Trying checksummed upstream archive." >&2
+    fi
+  fi
+fi
+
+# Only use official mirrors if the signed Ubuntu toolchain was unavailable.
+if [[ -z "$GO" ]]; then
 for url in \
   "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" \
   "https://dl.google.com/go/go$GO_VERSION.linux-amd64.tar.gz" \
@@ -46,6 +69,7 @@ for url in \
   fi
   rm -f "$work/go.tar.gz"
 done
+fi
 
 if [[ -z "$GO" ]]; then
   echo "[i] Official archives failed. Trying Go toolchain module via proxy.golang.org..."
