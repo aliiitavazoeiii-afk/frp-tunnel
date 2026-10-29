@@ -162,6 +162,24 @@ EOF
   probe 7994 2 || die 'Mieru baseline failed; production untouched'
   log "STAGE PASS: production services and ports unchanged."
 }
+verify_stage_matches_current(){
+  # A shadow trial can remain up for days. If the foreign credentials or
+  # hostname changed in the meantime, a cutover to stale clients is unsafe.
+  ORIG="$ORIG" STAGED="$R" python3 <<'PY'
+import json,os,pathlib,sys
+orig=json.loads(pathlib.Path(os.environ["ORIG"]).read_text())
+root=pathlib.Path(os.environ["STAGED"])
+assert orig.get("listen")=="socks://127.0.0.1:7993"
+for name,port in (("a",17993),("b",17994)):
+    present=json.loads((root/f"shard-{name}.json").read_text())
+    expected={**orig,"listen":f"socks://127.0.0.1:{port}"}
+    if present!=expected:
+        print("ABORT: staged Naive config",name,
+              "differs from CURRENT production credentials/endpoint",file=sys.stderr)
+        sys.exit(1)
+print("Both staged Naive clients exactly match current production foreign endpoint (secret redacted).")
+PY
+}
 restore(){
   [[ -e "$O" ]] && rm -f "$O"
   systemctl daemon-reload
@@ -185,6 +203,7 @@ cutover(){
   [[ "$stage_port" =~ ^[0-9]{4,5}$ ]] || die 'invalid staging port'
   systemctl show nm-naive-client.service -p ExecStart --value | grep -Fq "$ORIG" || die 'unknown ExecStart'
   for s in nm-naive-shard-a nm-naive-shard-b nm-naive-staging-gw;do alive "$s" || die "missing stage: $s";done
+  verify_stage_matches_current || die 'staged credentials are stale; cutover refused'
   probe 17993 4 || die 'shard A unhealthy'
   probe 17994 4 || die 'shard B unhealthy'
   probe "$stage_port" 8 || die 'staging gateway unhealthy'
