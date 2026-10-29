@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import csv
+import io
 import datetime
 import ipaddress
 import json
@@ -108,6 +110,45 @@ def health_cache() -> tuple[dict, int | None]:
         return {}, None
 
 
+def haproxy_metrics() -> dict[str, dict]:
+    """Get real current/total HAProxy backend connections and bytes via local admin socket."""
+    path = RUN / "haproxy.sock"
+    if not path.exists():
+        return {}
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(3)
+            s.connect(str(path))
+            s.sendall(b"show stat\n")
+            s.shutdown(socket.SHUT_WR)
+            buf = bytearray()
+            while True:
+                chunk = s.recv(16384)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) > 1024 * 1024:
+                    return {}
+        lines = buf.decode(errors="replace").splitlines()
+        if not lines:
+            return {}
+        headers = lines[0].lstrip("# ").split(",")
+        data = {}
+        for row in csv.DictReader(io.StringIO("\n".join(lines[1:])), fieldnames=headers):
+            if row.get("pxname") == "dual_egress" and row.get("svname") in ("backhaul", "mieru", "BACKEND"):
+                data[row["svname"]] = {
+                    "state": row.get("status", "?"),
+                    "current": row.get("scur") or "0",
+                    "total": row.get("stot") or "0",
+                    "bytes_in": row.get("bin") or "0",
+                    "bytes_out": row.get("bout") or "0",
+                    "checks_failed": row.get("chkfail") or "0",
+                }
+        return data
+    except (OSError, ValueError):
+        return {}
+
+
 def outbound_probe(port: int, url: str, expected: int, max_seconds: int = 10) -> dict:
     args = ["curl", "-4", "--noproxy", "", "--silent", "--show-error",
             "--socks5-hostname", "127.0.0.1:%d" % port,
@@ -176,6 +217,14 @@ def print_status(deep: bool = False) -> None:
     print("  GATEWAY 127.0.0.1:18080 | HAProxy=%s | controller=%s" %
           (status(SERVICES["gateway"]), status(SERVICES["health"])))
     print("  health.json age: %ss" % (age if age is not None else "UNKNOWN"))
+    live = haproxy_metrics()
+    if live:
+        print(color("  LIVE HAProxy backend counters (since gateway restart):", "1;36"))
+        for role in ("backhaul", "mieru"):
+            a = live.get(role, {})
+            print("    %-8s state=%-8s active=%-5s total=%-8s bytes_in=%-10s bytes_out=%s" %
+                  (role, a.get("state", "?"), a.get("current", "?"),
+                   a.get("total", "?"), a.get("bytes_in", "?"), a.get("bytes_out", "?")))
     print("  " + "-" * 65)
     if not deep:
         print("  sudo dual health     : end-to-end HTTPS probes + network checks")
