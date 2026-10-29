@@ -29,6 +29,35 @@ probe(){
   log "port :$port => $n/$tries"
   ((n==tries))
 }
+# Unlike strict STAGE checks, post-switch probes tolerate isolated Internet
+# timeouts. A single dropped HTTPS request must not force users through a
+# second carrier restart. Thresholds still require strong majority success.
+probe_min(){
+  local port=$1 tries=$2 required=$3 i n=0 rc status
+  (( tries>=3 && required>0 && required<=tries )) || die 'invalid probe_min threshold'
+  for ((i=0;i<tries;i++));do
+    rc=0
+    status=$(curl -q -4 -sS --socks5-hostname "127.0.0.1:$port" \
+      --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' \
+      'https://www.gstatic.com/generate_204' 2>/dev/null) || rc=$?
+    [[ $rc == 0 && "$status" == 204 ]] && n=$((n+1))
+    sleep 0.2
+  done
+  log "postflight :$port => $n/$tries (minimum $required)"
+  (( n>=required ))
+}
+health_retry(){
+  local i
+  for i in 1 2;do
+    if /usr/local/sbin/nm-health --full naive;then
+      log "Naive full health PASS on round $i"
+      return 0
+    fi
+    log "Naive full health round $i failed; checking again before rollback."
+    sleep 2
+  done
+  return 1
+}
 services(){
   local x
   for x in "${PROTECTED[@]}";do alive "$x" || die "protected service inactive: $x";done
@@ -181,10 +210,23 @@ print("Both staged Naive clients exactly match current production foreign endpoi
 PY
 }
 restore(){
+  # Restore success means the original unit definition and process are active.
+  # Health probes are reported SEPARATELY: intermittent Internet failures do
+  # not mean the config restoration itself failed.
   [[ -e "$O" ]] && rm -f "$O"
   systemctl daemon-reload
-  systemctl restart nm-naive-client.service
-  alive nm-naive-client && probe 7993 3
+  systemctl restart nm-naive-client.service || return 1
+  alive nm-naive-client || return 1
+  if ! systemctl show nm-naive-client.service -p ExecStart --value | grep -Fq "$ORIG"; then
+    log "CRITICAL: Naive service ExecStart is not the original client."
+    return 1
+  fi
+  log "ORIGINAL NAIVE CONFIG AND PROCESS RESTORED."
+  if ! probe_min 7993 5 3;then
+    log "WARNING: restored original Naive client is still unstable."
+    log "This does NOT mean configuration rollback failed."
+  fi
+  return 0
 }
 cutover(){
   # Never expose live Naive clients to the old gateway-only HA behavior.
@@ -230,13 +272,20 @@ EOF
   systemctl daemon-reload
   log 'SWITCH: restarting Naive role ONLY; existing Naive flows may disconnect once.'
   if ! systemctl restart nm-naive-client.service ||
-     ! alive nm-naive-client ||
-     ! probe 7993 5 ||
-     ! probe 7991 3 ||
-     ! /usr/local/sbin/nm-health --full naive;then
-    log 'Naive gateway unhealthy; automatic rollback to original client.'
-    restore || log 'CRITICAL: Naive rollback failed; inspect systemctl status'
-    die 'cutover postflight failed'
+     ! alive nm-naive-client;then
+    log 'New Naive gateway failed to start; automatic original-client restore.'
+    restore || log 'CRITICAL: original Naive service failed to restart.'
+    die 'cutover service-start failed'
+  fi
+  sleep 3  # allow fresh sockets and the Gateway to warm up
+  if ! probe_min 7993 10 8 ||
+     ! probe_min 7991 8 6 ||
+     ! probe 17993 3 ||
+     ! probe 17994 3 ||
+     ! health_retry;then
+    log 'Repeated Naive health probes failed; automatic original-client restore.'
+    restore || log 'CRITICAL: original Naive service failed to restart.'
+    die 'cutover postflight failed; config rollback attempted'
   fi
   [[ "$(pids)" == "$before" ]] || log 'WARNING: protected service PID changed externally'
   # Extra HA smoke test is read-only and must recognize live sharding.
