@@ -8,7 +8,7 @@ on:
       - '.github/workflows/dual-backhaul-v2-compile.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   compile:
     runs-on: ubuntu-24.04
@@ -34,3 +34,17 @@ jobs:
           path: dist/
           retention-days: 15
           if-no-files-found: error
+      - name: Publish immutable prerelease for direct VPS download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="dual-backhaul-v2-build-$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          gh release create "$TAG" \
+            dist/backhaul-custom-v2-linux-amd64 \
+            dist/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "Custom Backhaul V2 (staging) $TAG" \
+            --notes "Pinned source, patchset, Go tests and SHA256 verified in Ubuntu 24.04 CI. Staging binary only, not a validated production tunnel." \
+            --prerelease
+          echo "STAGING_RELEASE_URL=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
