@@ -1,0 +1,34 @@
+name: Dual Backhaul Mieru HA staging checks
+on:
+  push:
+    branches:
+      - dual-backhaul-mieru-ha
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/**'
+      - '.github/workflows/dual-backhaul-mieru-ha-ci.yml'
+  pull_request:
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install HAProxy
+        run: sudo apt-get update && sudo apt-get install -y haproxy
+      - name: Bash syntax
+        run: |
+          set -e
+          for file in dual-backhaul-mieru-ha/v2/*.sh; do bash -n "$file"; done
+      - name: Python compile and unit tests
+        run: |
+          python3 -m compileall -q dual-backhaul-mieru-ha/v2
+          python3 -m unittest discover -s dual-backhaul-mieru-ha/v2/tests -v
+      - name: HAProxy configuration
+        run: haproxy -c -f dual-backhaul-mieru-ha/v2/haproxy.cfg
+      - name: Check cleartext credentials absent
+        run: |
+          ! grep -nE "(MIERU_PASSWORD|BH_TOKEN)='[0-9a-f]{64}'" dual-backhaul-mieru-ha/v2/*.sh
