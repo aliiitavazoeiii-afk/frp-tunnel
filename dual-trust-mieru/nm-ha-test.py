@@ -87,6 +87,25 @@ class HATests(unittest.TestCase):
         self.shard_cycle("DOWN","HEALTHY","HEALTHY","HEALTHY")
         self.assertEqual(len(self.role_restart),1,
                          "do not keep restarting entire Naive gateway")
+    def test_sustained_partial_naive_shard_failure_gets_one_repair(self):
+        # Existing HA ignored DEGRADED forever: users experienced broken apps
+        # while gstatic remained reachable. Five consecutive partial cycles
+        # now permit ONE shard-only repair, capped by 30m cooldown.
+        for i in range(4):
+            state=self.shard_cycle("HEALTHY","HEALTHY","DEGRADED","HEALTHY")
+            self.assertEqual(self.role_restart,[])
+            self.assertEqual(self.selected,"DUAL-AUTO")
+        state=self.shard_cycle("HEALTHY","HEALTHY","DEGRADED","HEALTHY")
+        self.assertEqual(self.role_restart,
+                         [["systemctl","restart","nm-naive-shard-a.service"]])
+        self.assertEqual(state["shards"]["a"]["incident"],1)
+        for i in range(7):
+            self.shard_cycle("HEALTHY","HEALTHY","DEGRADED","HEALTHY")
+        self.assertEqual(len(self.role_restart),1,"30m cooldown blocks restart storm")
+    def test_partial_degradation_both_backends_never_restart_blindly(self):
+        for i in range(6):
+            self.shard_cycle("HEALTHY","HEALTHY","DEGRADED","DEGRADED")
+        self.assertEqual(self.role_restart,[])
     def test_shard_a_restarted_without_gateway_or_mieru_restart(self):
         self.shard_cycle("HEALTHY","HEALTHY","DOWN","HEALTHY")
         self.assertEqual(self.role_restart,[])
