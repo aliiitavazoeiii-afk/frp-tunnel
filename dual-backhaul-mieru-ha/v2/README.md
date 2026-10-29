@@ -83,7 +83,9 @@ The result MUST show \`ip=\` on HTTPS egress via \`127.0.0.1:21002\`. Do not pas
 Still on Iran:
 
 \`\`\`bash
-sudo bash build-backhaul.sh
+sudo bash install-prebuilt-backhaul.sh dual-backhaul-v2-build-368d09411985
+sudo bash preflight-backhaul.sh iran YOUR_BH_DOMAIN
+# Only when preflight reports DNS_OK and ports are free:
 sudo bash iran-backhaul.sh YOUR_BH_DOMAIN
 \`\`\`
 
@@ -103,7 +105,8 @@ On Foreign-1 \`152.237.230.159\`:
 
 \`\`\`bash
 cd /root/frp-tunnel/dual-backhaul-mieru-ha/v2
-sudo bash build-backhaul.sh
+# The same prebuilt SHA256 binary was already installed on Foreign-1.
+sudo bash preflight-backhaul.sh foreign
 sudo bash foreign-backhaul.sh /root/dual-ha-backhaul-bundle.env
 \`\`\`
 
