@@ -6,7 +6,11 @@ set -Eeuo pipefail
 IRAN_IP="$1"
 [[ "$IRAN_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Usage: sudo bash foreign-mieru.sh IRAN_PUBLIC_IP"; exit 2; }
 if systemctl is-active --quiet mita 2>/dev/null; then echo "Existing mita service active: refusing shared install"; exit 3; fi
+if systemctl is-active --quiet dual-ha-mita 2>/dev/null; then echo "Dual HA Mita already running; refusing to rotate secrets"; exit 3; fi
 if ss -Hlnpt '( sport = :28443 )' | grep -q LISTEN; then echo "Port 28443 occupied"; exit 3; fi
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y curl ca-certificates openssl python3 tar
 VERSION=3.39.0
 SHA=ea35fdef84bef1378f32b74a2d5a883d508a49dd4e64dba9a3a8363beed5798c
 mkdir -p /etc/dual-ha /opt/dual-ha/bin /var/lib/mita /run/dual-ha-mita
