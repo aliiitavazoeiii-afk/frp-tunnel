@@ -18,7 +18,7 @@ mkdir -p /etc/dual-ha /opt/dual-ha/bin
 chmod 0700 /etc/dual-ha
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-curl -fL --retry 3 "https://github.com/enfein/mieru/releases/download/v$VERSION/mieru_$VERSION_linux_amd64.tar.gz" -o "$work/mieru.tar.gz"
+curl -fL --retry 3 "https://github.com/enfein/mieru/releases/download/v$VERSION/mieru_${VERSION}_linux_amd64.tar.gz" -o "$work/mieru.tar.gz"
 echo "$SHA  $work/mieru.tar.gz" | sha256sum -c -
 mkdir "$work/unpack"
 tar -xzf "$work/mieru.tar.gz" -C "$work/unpack"
