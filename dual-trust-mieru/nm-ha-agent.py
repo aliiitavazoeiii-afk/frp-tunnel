@@ -22,6 +22,7 @@ SHARD_OVERLAY=pathlib.Path("/etc/systemd/system/nm-naive-client.service.d/90-nai
 SHARD_PORTS={"a":17993,"b":17994}
 SHARD_UNITS={"a":"nm-naive-shard-a.service","b":"nm-naive-shard-b.service"}
 SHARD_RESTART_COOLDOWN=1800  # seconds; avoid repeated interruptions on flapping links.
+SHARD_DEGRADED_RECOVERY_CYCLES=5  # persistent partial outage (~several minutes)
 
 
 def iso():
@@ -99,8 +100,9 @@ def probe_shards():
     return out
 
 def shard_defaults():
-    return {name:{"failed_cycles":0,"healthy_cycles":0,"last_restart_epoch":0,
-                  "last_restart_at":None,"incident":0,"status":"UNKNOWN"}
+    return {name:{"failed_cycles":0,"degraded_cycles":0,"healthy_cycles":0,
+                  "last_restart_epoch":0,"last_restart_at":None,
+                  "incident":0,"status":"UNKNOWN"}
             for name in SHARD_PORTS}
 
 def effective_sharded_health(gateway_health, shards):
@@ -191,6 +193,7 @@ def status_document(s,measurements,selected,policy,shards=None):
             shard_public[name]={"health":item["health"],"probes":item["probes"],
                                 "status":prior.get("status","UNKNOWN"),
                                 "failed_cycles":prior.get("failed_cycles",0),
+                                "degraded_cycles":prior.get("degraded_cycles",0),
                                 "last_restart_at":prior.get("last_restart_at"),
                                 "incident":prior.get("incident",0)}
     return {"schema":1,"server_id":os.environ.get("NM_HA_SERVER_ID","maya11"),
@@ -252,17 +255,23 @@ def live_once(dry_run=False):
                     health=observation["health"]
                     if health=="DOWN":
                         part["failed_cycles"]=min(100,part["failed_cycles"]+1)
+                        part["degraded_cycles"]=0
                         part["healthy_cycles"]=0
                     elif health=="HEALTHY":
                         part["healthy_cycles"]=min(100,part["healthy_cycles"]+1)
                         part["failed_cycles"]=0
+                        part["degraded_cycles"]=0
                     else:
                         part["failed_cycles"]=0
+                        part["degraded_cycles"]=min(100,part.get("degraded_cycles",0)+1)
                         part["healthy_cycles"]=0
                     peer="b" if name=="a" else "a"
                     # A single failed shard can be repaired while the other Naive
                     # shard and independent Mieru are both alive.
-                    eligible=(part["failed_cycles"]>=2
+                    eligible=((
+                                  part["failed_cycles"]>=2
+                                  or part.get("degraded_cycles",0)>=SHARD_DEGRADED_RECOVERY_CYCLES
+                              )
                               and shards[peer]["health"]=="HEALTHY"
                               and time.time()-part["last_restart_epoch"]>=SHARD_RESTART_COOLDOWN)
                     # Independent Naive backend recovery must not depend on
@@ -281,6 +290,7 @@ def live_once(dry_run=False):
                         shards[name]=checked
                         if result.returncode==0 and checked["health"]=="HEALTHY":
                             part["failed_cycles"]=0
+                            part["degraded_cycles"]=0
                             part["healthy_cycles"]=1
                             event(s,"NAIVE_SHARD_RECOVERED","naive",name)
                         else:
