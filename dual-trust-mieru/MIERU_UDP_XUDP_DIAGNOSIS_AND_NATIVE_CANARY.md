@@ -34,3 +34,31 @@ Ensure the companion file `nm-mieru-udp-diagnose.py` is present at the same revi
 ### Production safety and future work
 Once candidate passes, build a separately reviewed `cutover` utility with atomic backup, strict preflight checks (both Naive and Mieru, HA active, exact config schema), interactive confirmation, test and automatic rollback. Switching live Xray Bridge will restart `dual-xudp-bridge` and can interrupt BOTH Naive and Mieru TCP/UDP users, since :7991 and :7992 share the service. Schedule in low traffic and do not claim zero disruption. Alternatively, design a more complex zero-shared-restart listener migration. NEVER automatically execute a production bridge restart just from a green synthetic test.
 HA must eventually monitor TCP and UDP separately; do not blindly quarantine otherwise working Mieru TCP due to UDP-only failure. For Control Room show an independent UDP/XUDP health field with last successful test.
+
+## Shadow validation — confirmed on real maya11
+At 2026-10-29, user ran the candidate on Iran maya11:
+- NAIVE_CURRENT_XUDP :7991 = 9/9 DNS successes.
+- MIERU_CURRENT_XUDP :7992 = 0/9 DNS successes (all timeouts).
+- MIERU_NATIVE_DIRECT :7994 = 9/9 DNS successes.
+- MIERU_NATIVE_BRIDGE_CANDIDATE :17992 = 9/9 DNS successes.
+- HTTPS regression: Mieru production :7992 PASS; isolated native Mieru :17992 PASS.
+The candidate was deleted after tests. This is compelling evidence that native Mieru SOCKS UDP via Xray works in this environment. DNS success does not prove all QUIC, games or sustained load.
+
+## Guarded production change (AVAILABLE, NOT YET APPLIED)
+File: `nm-mieru-native-udp-cutover.py` (plan / status / cutover / rollback).
+Change is EXACTLY one existing live Xray rule: inbound `mieru-in`, `network=udp`, outbound `xudp-mieru` -> `carrier-mieru`. All other config is kept untouched. The original Xray :7991 Naive TCP/UDP and Mieru TCP :7992 remain routed as before.
+
+CLI on Iran maya11 after pinned checkout:
+```
+sudo python3 dual-trust-mieru/nm-mieru-native-udp-cutover.py status
+sudo python3 dual-trust-mieru/nm-mieru-native-udp-cutover.py plan
+# During low traffic, after operator acknowledges both lanes can have interrupted sessions:
+sudo python3 dual-trust-mieru/nm-mieru-native-udp-cutover.py cutover
+# If later manual rollback needed (will reintroduce old broken Mieru UDP):
+sudo python3 dual-trust-mieru/nm-mieru-native-udp-cutover.py rollback
+```
+The tool runs the shadow canary again, verifies known exact topology, active production units, HA timer + Selector DUAL-AUTO, and validates the replacement config via Xray -test. It prints the current live connection count and requires interactive `FIX-MIERU-UDP` approval. It serializes with the HA lock; writes an immutable restricted original backup under `/var/lib/dual-trust-mieru/naive-mieru/mieru-udp-native/original.json`, and only then atomically updates `xudp.json` and restarts shared `dual-xudp-bridge.service` ONCE.
+
+Postflight checks UDP to 3 independent DNS resolvers for Naive :7991, Mieru :7992 and Dispatcher :7990, and HTTP over all three. Failing these tests triggers attempted automatic restoration of original config and SECOND Bridge restart. If both are broken, report critical error and investigate manually (backup is preserved). Successful cutover records state LIVE. Manual rollback requires exact backup/current SHA checks and an additional interactive confirmation.
+
+Caution: Restarting dual-xudp-bridge disrupts established sessions on BOTH branches. Do NOT perform during peak traffic or when the other role is unhealthy. The one-time interruption is deliberate and cannot be advertised as zero downtime. No changes to x-ui, Mieru carrier process, Naive carrier, dispatcher or HA selection. The old HA still only checks HTTP, not UDP; extend telemetry and healthy-state criteria separately after proven cutover. No automated route changes based only on short DNS probes.
