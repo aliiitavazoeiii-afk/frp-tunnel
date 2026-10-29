@@ -107,6 +107,22 @@ jobs:
               assert forbidden not in src
           print("Read-only Mieru UDP/XUDP diagnostics: PASS")
           PY
+      - name: Verify Naive cutover false-negative recovery safety policy
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("dual-trust-mieru/nm-naive-shards-maintenance.sh").read_text()
+          assert 'probe_min 7993 10 8' in src
+          assert 'probe_min 7991 8 6' in src
+          assert 'health_retry' in src
+          assert 'probe 17993 3' in src and 'probe 17994 3' in src
+          assert 'ORIGINAL NAIVE CONFIG AND PROCESS RESTORED.' in src
+          assert 'probe_min 7993 5 3' in src
+          assert 'This does NOT mean configuration rollback failed.' in src
+          assert 'verify_stage_matches_current' in src
+          assert 'flock -w 20 8' in src
+          print("Naive cutover multi-round postflight + accurate rollback reporting PASS")
+          PY
       - name: Verify HA shard coordination and approved live cutover guard
         run: |
           python3 - <<'PY'
