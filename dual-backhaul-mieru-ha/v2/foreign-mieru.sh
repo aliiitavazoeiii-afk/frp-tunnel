@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 [[ $(uname -m) == x86_64 ]] || { echo "amd64 required"; exit 1; }
-IRAN_IP="$1"
+IRAN_IP="${1:-}"
+FOREIGN_IP="${2:-}"
+[[ "$FOREIGN_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Usage: sudo bash foreign-mieru.sh IRAN_PUBLIC_IP FOREIGN_PUBLIC_IP"; exit 2; }
 [[ "$IRAN_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Usage: sudo bash foreign-mieru.sh IRAN_PUBLIC_IP"; exit 2; }
 if systemctl is-active --quiet mita 2>/dev/null; then echo "Existing mita service active: refusing shared install"; exit 3; fi
 if [[ -e /etc/dual-ha/mita.json || -e /etc/dual-ha/mieru-bundle.env || -e /etc/systemd/system/dual-ha-mita.service ]]; then
@@ -53,7 +55,7 @@ chown root:mita /etc/dual-ha/mita.json
 chmod 0640 /etc/dual-ha/mita.json
 install -d -m 0750 -o mita -g mita /var/lib/mita
 cat >/etc/dual-ha/mieru-bundle.env <<EOF
-MIERU_REMOTE_IP='152.237.230.248'
+MIERU_REMOTE_IP='$FOREIGN_IP'
 MIERU_TCP_PORT='28443'
 MIERU_USER='$USER_NAME'
 MIERU_PASSWORD='$PASSWORD'
