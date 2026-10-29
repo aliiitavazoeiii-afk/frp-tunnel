@@ -3,12 +3,20 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 [[ -x /opt/dual-ha/bin/backhaul ]] || { echo "First run: sudo bash build-backhaul.sh"; exit 2; }
-BUNDLE="$1"
+BUNDLE="${1:-}"
+MODE="${2:-install}"
+[[ "$MODE" == "install" || "$MODE" == "prepare" ]] || { echo "Usage: foreign-backhaul.sh BUNDLE [install|prepare]"; exit 2; }
 [[ -r "$BUNDLE" ]] || { echo "Usage: sudo bash foreign-backhaul.sh /root/dual-ha-backhaul-bundle.env"; exit 2; }
-grep -Eq "^BH_FOREIGN_IP='152[.]237[.]230[.]159'$" "$BUNDLE" || { echo "Foreign-1 IP mismatch"; exit 3; }
+grep -Eq "^BH_FOREIGN_IP='([0-9]{1,3}[.]){3}[0-9]{1,3}'$" "$BUNDLE" || { echo "Foreign public IPv4 missing from bundle"; exit 3; }
 # shellcheck source=/dev/null
 source "$BUNDLE"
 [[ "$BH_TOKEN" =~ ^[0-9a-f]{64}$ && "$BH_TLS_PORT" == 18443 ]] || { echo "Invalid secret bundle"; exit 3; }
+[[ "$BH_FOREIGN_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Invalid foreign IP"; exit 3; }
+# Allow a new replacement foreign IP but never reuse an existing tunnel's secrets on an unrelated host without explicit operator control.
+LOCAL_PUBLIC_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}' || true)"
+if [[ -n "$LOCAL_PUBLIC_IP" && "$LOCAL_PUBLIC_IP" != "$BH_FOREIGN_IP" ]]; then
+  echo "[!] Local interface IP $LOCAL_PUBLIC_IP differs from bundle $BH_FOREIGN_IP (possible NAT)." >&2
+fi
 [[ "$BH_DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || exit 3
 [[ "$BH_CONTROL_PATH" =~ ^/[a-z0-9/]+$ && "$BH_TUNNEL_PATH" =~ ^/[a-z0-9/]+$ ]] || exit 3
 if ss -Hlnpt '( sport = :11080 )' | grep -q LISTEN; then echo "Foreign SOCKS port 11080 occupied"; exit 3; fi
@@ -92,6 +100,11 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
+if [[ "$MODE" == "prepare" ]]; then
+  echo "[+] Backhaul client configured but NOT started; safe for staging alongside live old foreign host."
+  echo "    Later: systemctl start dual-ha-backhaul-client"
+  exit 0
+fi
 systemctl enable --now dual-ha-backhaul-client
 sleep 4
 systemctl is-active --quiet dual-ha-backhaul-client || { journalctl -u dual-ha-backhaul-client -n 70 --no-pager; exit 3; }
