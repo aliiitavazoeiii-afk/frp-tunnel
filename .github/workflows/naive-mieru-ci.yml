@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh dual-trust-mieru/nm-helper.sh dual-trust-mieru/nm-ha-install.sh dual-trust-mieru/nm-naive-inspect.sh
-      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py dual-trust-mieru/nm-naive-shards-compare.py dual-trust-mieru/nm-mieru-udp-diagnose.py dual-trust-mieru/nm-mieru-udp-diagnose-test.py dual-trust-mieru/nm-mieru-native-udp-canary.py dual-trust-mieru/nm-mieru-native-udp-canary-test.py
+      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py dual-trust-mieru/nm-naive-shards-compare.py dual-trust-mieru/nm-mieru-udp-diagnose.py dual-trust-mieru/nm-mieru-udp-diagnose-test.py dual-trust-mieru/nm-mieru-native-udp-canary.py dual-trust-mieru/nm-mieru-native-udp-canary-test.py dual-trust-mieru/nm-mieru-native-udp-cutover.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|nm-naive-client)' dual-trust-mieru/nm-rr-maintenance.sh"
@@ -24,6 +24,38 @@ jobs:
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher|nm-naive-client)' dual-trust-mieru/nm-adaptive-install.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable)|iptables|nft -f|killall|pkill' dual-trust-mieru/nm-naive-fresh-client-diagnose.py"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-dispatcher|dual-xudp-bridge|dual-mieru-carrier)' dual-trust-mieru/nm-naive-shards-maintenance.sh"
+      - name: Verify Mieru single-rule change and backup/rollback guard
+        run: |
+          python3 - <<'PY'
+          import importlib.util,json,pathlib
+          p=pathlib.Path("dual-trust-mieru/nm-mieru-native-udp-cutover.py")
+          spec=importlib.util.spec_from_file_location("cutover",p)
+          m=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          data={"inbounds":[
+             {"tag":"trust-in","listen":"127.0.0.1","port":7991,"protocol":"socks","settings":{"udp":True}},
+             {"tag":"mieru-in","listen":"127.0.0.1","port":7992,"protocol":"socks","settings":{"udp":True}}],
+            "outbounds":[
+             {"tag":"xudp-trust","protocol":"vless"},
+             {"tag":"xudp-mieru","protocol":"vless"},
+             {"tag":"carrier-trust","protocol":"socks","settings":{"address":"127.0.0.1","port":7993}},
+             {"tag":"carrier-mieru","protocol":"socks","settings":{"address":"127.0.0.1","port":7994}}],
+            "routing":{"rules":[
+             {"type":"field","inboundTag":["trust-in"],"network":"tcp","outboundTag":"carrier-trust"},
+             {"type":"field","inboundTag":["trust-in"],"network":"udp","outboundTag":"xudp-trust"},
+             {"type":"field","inboundTag":["mieru-in"],"network":"tcp","outboundTag":"carrier-mieru"},
+             {"type":"field","inboundTag":["mieru-in"],"network":"udp","outboundTag":"xudp-mieru"}]}}
+          assert m.known(data)=="xudp-mieru"
+          out=json.loads(m.proposed(m.data_bytes(data)))
+          assert m.known(out)=="carrier-mieru"
+          out["routing"]["rules"][3]["outboundTag"]="xudp-mieru"
+          assert out==data,"unexpected unrelated changes"
+          src=p.read_text()
+          for item in ("fcntl.flock", "FIX-MIERU-UDP","ROLLBACK-MIERU-UDP",
+                       "atom(BACKUP,original)", "restart(original)", "test_xray(candidate)"):
+              assert item in src,item
+          print("Mieru native UDP single-rule change + cutover guards PASS")
+          PY
       - name: Check native Mieru Xray shadow doesn't write production
         run: |
           python3 - <<'PY'
