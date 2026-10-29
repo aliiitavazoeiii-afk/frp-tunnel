@@ -54,6 +54,37 @@ class HATests(unittest.TestCase):
              mock.patch.object(ha,"probe_shards",
                                lambda:{"a":record(shard_a),"b":record(shard_b)}):
             return self.cycle(n,m)
+    def test_stopped_shard_unit_does_not_disable_shard_awareness(self):
+        overlay=self.dir/"90-naive-shards.conf"
+        overlay.write_text(
+            "[Service]\nExecStart=\n"
+            "ExecStart=/usr/local/lib/dual-trust-mieru/mihomo "
+            "-d /var/lib/dual-trust-mieru/naive-shards/live "
+            "-f /etc/dual-trust-mieru/naive-shards/live.yaml\n")
+        with mock.patch.object(ha,"SHARD_OVERLAY",overlay):
+            self.assertTrue(ha.sharding_live(),
+                "a dead shard backend must be repaired, not make HA abort")
+    def test_bad_backend_does_not_quarantine_entire_naive_role(self):
+        self.shard_cycle("DOWN","HEALTHY","DOWN","HEALTHY")
+        s=self.shard_cycle("DOWN","HEALTHY","DOWN","HEALTHY")
+        self.assertEqual(self.selected,"DUAL-AUTO")
+        self.assertEqual(s["roles"]["naive"]["status"],"DEGRADED")
+        self.assertEqual(self.role_restart,
+                         [["systemctl","restart","nm-naive-shard-a.service"]])
+    def test_naive_shard_can_recover_if_mieru_is_down(self):
+        self.shard_cycle("HEALTHY","DOWN","DOWN","HEALTHY")
+        s=self.shard_cycle("HEALTHY","DOWN","DOWN","HEALTHY")
+        self.assertEqual(self.role_restart,
+                         [["systemctl","restart","nm-naive-shard-a.service"]])
+        self.assertEqual(s["shards"]["a"]["incident"],1)
+    def test_gateway_restarts_only_if_both_backends_healthy(self):
+        self.shard_cycle("DOWN","HEALTHY","HEALTHY","HEALTHY")
+        self.shard_cycle("DOWN","HEALTHY","HEALTHY","HEALTHY")
+        self.assertEqual(self.role_restart,
+                         [["systemctl","restart","nm-naive-client.service"]])
+        self.shard_cycle("DOWN","HEALTHY","HEALTHY","HEALTHY")
+        self.assertEqual(len(self.role_restart),1,
+                         "do not keep restarting entire Naive gateway")
     def test_shard_a_restarted_without_gateway_or_mieru_restart(self):
         self.shard_cycle("HEALTHY","HEALTHY","DOWN","HEALTHY")
         self.assertEqual(self.role_restart,[])
