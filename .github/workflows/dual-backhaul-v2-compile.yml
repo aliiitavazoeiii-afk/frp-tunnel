@@ -1,0 +1,36 @@
+name: Compile pinned Custom Backhaul V2 (amd64)
+on:
+  push:
+    branches:
+      - dual-backhaul-mieru-ha
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/build-backhaul.sh'
+      - '.github/workflows/dual-backhaul-v2-compile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer syntax
+        run: bash -n dual-backhaul-mieru-ha/v2/build-backhaul.sh
+      - name: Compile original pinned custom Backhaul V2
+        run: sudo bash dual-backhaul-mieru-ha/v2/build-backhaul.sh
+      - name: Verify binary architecture, SHA and export
+        run: |
+          set -euo pipefail
+          file /opt/dual-ha/bin/backhaul
+          test -s /opt/dual-ha/bin/backhaul
+          mkdir -p dist
+          install -m 0755 /opt/dual-ha/bin/backhaul dist/backhaul-custom-v2-linux-amd64
+          (cd dist && sha256sum backhaul-custom-v2-linux-amd64 > SHA256SUMS)
+          cat dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backhaul-custom-v2-linux-amd64
+          path: dist/
+          retention-days: 15
+          if-no-files-found: error
