@@ -33,13 +33,18 @@ On 3x-ui -> **Xray Settings** -> **Outbounds**, append, without replacing existi
   "tag": "dual-ha-socks",
   "protocol": "socks",
   "settings": {
-    "address": "127.0.0.1",
-    "port": 18080
+    "servers": [
+      {
+        "address": "127.0.0.1",
+        "port": 18080,
+        "users": []
+      }
+    ]
   }
 }
 ```
 
-The object above is for Xray builds with flat SOCKS settings supported by the current upstream Xray outbound schema. **Confirm the installed core accepts it using the panel's config test before saving**, especially if the deployed core is older. Keep the first/default outbound unchanged.
+This **servers[]** object is the exact SOCKS Outbound shape shown by the operator's 3x-ui form. Xray core v26.4.25 explicitly accepts exactly one server in the legacy servers[] shape, as confirmed in its infra/conf/socks.go. The core also accepts flat address/port format, but prefer the 3x-ui UI-generated JSON for this installation. Confirm the panel's config test succeeds before applying, and keep `direct` as the first/default outbound. There can be a separate page-level Save/Apply button after closing the outbound editor.
 
 ## Step 3. Add only one TCP canary Routing rule
 
@@ -67,7 +72,7 @@ Replace values locally. Never send client credentials to chat. If the running Xr
 }
 ```
 
-Only use source-IP selection if the IP is uniquely yours (beware shared carrier NAT). Add the canary after protective `api`/block/private-IP rules but **before any catch-all rule** that would intercept it. Keep all other routing rules and inbound definitions unchanged. Use the panel's route test to verify that the selected user/IP routes to `dual-ha-socks`, and other users still route exactly as before.
+Only use source-IP selection if the IP is uniquely yours (beware shared carrier NAT). Add the canary after protective `api`/block/private-IP rules but **before any catch-all rule** that would intercept it. Keep all other routing rules and inbound definitions unchanged. **The 3x-ui Route Tester UI currently does not accept a user identity, so it cannot confirm email-based canary rules; use a real authenticated client test instead.**
 
 Do not insert a blanket `inboundTag`-only rule or make the new outbound the first/default outbound at this stage — that would migrate all user traffic.
 
@@ -90,3 +95,10 @@ Connect using the canary client's **existing REALITY configuration** from an ext
 If the canary fails or clients have errors, remove **only** the added canary routing rule and outbound from 3x-ui Xray Settings and apply the original settings. If any unrelated changes were made accidentally, recover the original template from the local private backup and/or the 3x-ui panel backup through an operator-controlled recovery procedure. Avoid an unreviewed full database restore because it can overwrite live traffic accounting since the snapshot. After revert, verify x-ui/443 and client accounting. Preserve the prechange database backup.
 
 **Status:** never mark entire production migration complete based only on gateway curl tests. First verify one real REALITY client, then a small canary cohort, then an observed progressive rollout. The current HAProxy algorithm is least-connection, not strict 50/50 or sticky-per-user.
+
+
+## Step 5. Only after a successful REALITY canary: optional progressive migration
+
+After checking client connectivity, accounting, stability, TCP-only limitations, and the planned impact of an Xray reload, expand the canary `user` list to a small controlled set of client emails. **Do not use a blanket inbound-only rule until the operator explicitly approves a production rollout and rollback test.** For full inbound TCP egress, the eventual rule would omit the `user` field and retain `inboundTag: ["inbound-443"]`, `network: "tcp"`, `outboundTag: "dual-ha-socks"`. Preserve previous blocking rules and leave non-TCP traffic on its existing route.
+
+Current `leastconn` distribution is not guaranteed to be 50/50 per user and the gateway has no per-identity stickiness.
