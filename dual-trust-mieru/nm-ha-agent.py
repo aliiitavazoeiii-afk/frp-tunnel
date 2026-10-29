@@ -77,9 +77,9 @@ def sharding_live():
     contents=SHARD_OVERLAY.read_text()
     if contents.count(expected)!=1 or "ExecStart=\n" not in contents:
         raise RuntimeError("Unknown Naive shard gateway override; refuse HA role action")
-    for unit in SHARD_UNITS.values():
-        if subprocess.run(["systemctl","is-active","--quiet",unit],timeout=5).returncode:
-            raise RuntimeError("Missing shard service "+unit+"; no automatic recovery")
+    # Deliberately DO NOT require each backend systemd unit to be active:
+    # a dead unit is exactly what shard-specific HA must detect and repair.
+    # probe_shards() checks per-backend data-plane reachability independently.
     return True
 
 def probe_shards():
@@ -102,6 +102,22 @@ def shard_defaults():
     return {name:{"failed_cycles":0,"healthy_cycles":0,"last_restart_epoch":0,
                   "last_restart_at":None,"incident":0,"status":"UNKNOWN"}
             for name in SHARD_PORTS}
+
+def effective_sharded_health(gateway_health, shards):
+    """Avoid declaring the whole Naive role DOWN if a real backend is healthy.
+
+    The production gateway uses RR, so a small number of probes can all pick
+    a failing backend by chance. Conversely, if both backends are healthy but
+    gateway is fully DOWN, that is a genuine gateway-local outage.
+    """
+    health=[shards[name]["health"] for name in SHARD_PORTS]
+    if any(x=="HEALTHY" for x in health) and not all(x=="HEALTHY" for x in health):
+        return "DEGRADED"
+    if all(x=="HEALTHY" for x in health):
+        return gateway_health
+    if gateway_health=="HEALTHY":
+        return "DEGRADED"  # cached/partial traffic cannot prove both shards work
+    return gateway_health
 
 def probe_all():
     # A failed gstatic alone is not sufficient: also require an independent
@@ -212,10 +228,10 @@ def live_once(dry_run=False):
         shards=probe_shards() if sharded else None
         if sharded:
             s.setdefault("shards",shard_defaults())
-            # A passing gateway probe can conceal one failed backend under RR.
-            # Reflect underlying degradation without falsely declaring total DOWN.
-            if any(shards[x]["health"]!="HEALTHY" for x in SHARD_PORTS) and measurements["naive"]["health"]=="HEALTHY":
-                measurements["naive"]["health"]="DEGRADED"
+            # A small RR sample can hit the bad backend repeatedly. Avoid
+            # unnecessary full-Naive quarantine while one shard is proven good.
+            measurements["naive"]["health"]=effective_sharded_health(
+                measurements["naive"]["health"],shards)
         for role in ROLES:
             st=s["roles"][role]
             measured=measurements[role]["health"]
@@ -248,8 +264,9 @@ def live_once(dry_run=False):
                     # shard and independent Mieru are both alive.
                     eligible=(part["failed_cycles"]>=2
                               and shards[peer]["health"]=="HEALTHY"
-                              and measurements["mieru"]["health"]=="HEALTHY"
                               and time.time()-part["last_restart_epoch"]>=SHARD_RESTART_COOLDOWN)
+                    # Independent Naive backend recovery must not depend on
+                    # an unrelated Mieru outage: that creates a cascading failure.
                     if not eligible:
                         continue
                     part["incident"]+=1
@@ -272,8 +289,8 @@ def live_once(dry_run=False):
                         event(s,"NAIVE_SHARD_RESTART_ERROR","naive",name+":"+type(exc).__name__)
                 # Live backend actions may change Naive gateway probe results.
                 measurements["naive"]=probe_all()["naive"]
-                if any(shards[x]["health"]!="HEALTHY" for x in SHARD_PORTS) and measurements["naive"]["health"]=="HEALTHY":
-                    measurements["naive"]["health"]="DEGRADED"
+                measurements["naive"]["health"]=effective_sharded_health(
+                    measurements["naive"]["health"],shards)
                 if measurements["naive"]["health"]=="HEALTHY":
                     s["roles"]["naive"]["failed_cycles"]=0
                     s["roles"]["naive"]["healthy_cycles"]=max(1,s["roles"]["naive"]["healthy_cycles"])
@@ -283,12 +300,41 @@ def live_once(dry_run=False):
                 if st["failed_cycles"]<2 or st["restart_attempted"]:
                     continue
                 if sharded and role=="naive":
-                    # Restarting nm-naive-client would restart ONLY the local
-                    # Mihomo gateway, NOT either actual Naive transport.
-                    # After repeated full-path failures, quarantine normally.
-                    if st["failed_cycles"]==2:
-                        event(s,"NAIVE_SHARDED_GATEWAY_RESTART_SKIPPED",role,
-                              "backend-specific remediation only")
+                    # If both independent backend processes are healthy but
+                    # the shared gateway fails all three application probes
+                    # twice, the gateway itself is the likely bad component.
+                    # Restart ONLY it, at most once per 30 minutes.
+                    all_backends_healthy=all(shards[x]["health"]=="HEALTHY"
+                                            for x in SHARD_PORTS)
+                    last=s.get("naive_gateway_last_restart_epoch",0)
+                    if (not all_backends_healthy
+                        or measurements["mieru"]["health"]!="HEALTHY"
+                        or time.time()-last<SHARD_RESTART_COOLDOWN):
+                        if st["failed_cycles"]==2:
+                            event(s,"NAIVE_GATEWAY_RESTART_SKIPPED",role,
+                                  "backend unhealthy, peer unhealthy, or cooldown")
+                        continue
+                    s["naive_gateway_last_restart_epoch"]=time.time()
+                    st["restart_attempted"]=True
+                    st["incident"]+=1
+                    st["last_restart_at"]=iso()
+                    event(s,"RESTARTING_NAIVE_GATEWAY",role,
+                          "both backends healthy but gateway fully down twice")
+                    save(s)
+                    try:
+                        proc=subprocess.run(["systemctl","restart",SERVICE[role]],timeout=15)
+                        time.sleep(4)
+                        check=probe_all()[role]
+                        check["health"]=effective_sharded_health(check["health"],shards)
+                        measurements[role]=check
+                        if proc.returncode==0 and check["health"]=="HEALTHY":
+                            st["failed_cycles"]=0
+                            st["healthy_cycles"]=1
+                            event(s,"NAIVE_GATEWAY_RECOVERED",role)
+                        else:
+                            event(s,"NAIVE_GATEWAY_STILL_DOWN",role,check["health"])
+                    except (OSError,subprocess.TimeoutExpired) as exc:
+                        event(s,"NAIVE_GATEWAY_RESTART_ERROR",role,type(exc).__name__)
                     continue
                 if measurements[peer]["health"]!="HEALTHY":
                     if st["failed_cycles"]==2:
