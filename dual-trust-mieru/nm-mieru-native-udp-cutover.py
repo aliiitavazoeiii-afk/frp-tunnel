@@ -99,6 +99,16 @@ def pool():
         answer=json.load(r)
     if answer.get("type")!="Selector":raise RuntimeError("unknown DUAL group type")
     return answer.get("now","UNKNOWN")
+def flow_count():
+    secret=(DIR/"controller.secret").read_text().strip()
+    req=urllib.request.Request("http://127.0.0.1:19090/connections",
+                                headers={"Authorization":"Bearer "+secret})
+    with urllib.request.urlopen(req,timeout=5) as r:
+        data=json.load(r)
+    connections=data.get("connections")
+    if not isinstance(connections,list):
+        raise RuntimeError("cannot verify active connection count")
+    return len(connections)
 def probe():
     if pool()!="DUAL-AUTO":raise RuntimeError("DUAL selector not balanced")
     if not (HOME/"nm-mieru-udp-diagnose.py").is_file():
@@ -144,6 +154,7 @@ def plan():
     original,candidate=preflight()
     print("PLAN ONLY: update Mieru UDP outbound xudp-mieru -> carrier-mieru")
     print("Unchanged: Naive TCP/UDP, Mieru TCP, dispatcher, HA, x-ui.")
+    print("Current active Mihomo flows:",flow_count())
     print("Original digest:",hashof(original))
     print("Candidate digest:",hashof(candidate))
     print("WARNING: shared Bridge restart interrupts existing user sessions.")
@@ -158,6 +169,7 @@ def cutover():
     with open(LOCK,"a+") as handle:
         fcntl.flock(handle,fcntl.LOCK_EX)
         original,candidate=preflight()
+        print("Current active Mihomo flows:",flow_count())
         print("WARNING: restart of shared Xray Bridge can interrupt BOTH Naive and Mieru sessions.")
         print("If postflight fails, automatic rollback requires a SECOND shared Bridge restart.")
         ans=input("Type FIX-MIERU-UDP to accept this risk: ").strip()
