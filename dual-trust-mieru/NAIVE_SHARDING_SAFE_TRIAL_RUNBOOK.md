@@ -102,3 +102,23 @@ New conservative HA rules (only AFTER explicit sharding cutover, not during stag
 Production action order: update pinned GitHub checkout -> run `nm-install-manager.sh` and `nm-ha-install.sh` (both non-restarting) -> inspect `nm-ha status`, `shards status`, and `dual health --full all`. If shadow active, compare A/B again, then ONLY in a low-traffic maintenance window explicitly run `nm-naive-shards-maintenance.sh cutover` and enter `CUTOVER-NAIVE-SHARDS`. It restarts Naive gateway :7993 ONLY; x-ui, Dispatcher, shared XUDP Bridge and Mieru stay running, but existing Naive connections may reconnect. If cutover postflight fails, the script attempts an automatic original-Naive rollback. Manual rollback with `nm-naive-shards-maintenance.sh rollback` reverses this with another Naive-only restart. Run real-traffic audit after and observe a busy hour; synthetic stage is not equivalent to production stability. The Mieru native UDP fix is preserved, untouched.
 
 If issues persist under load despite two isolated local Naive clients, move investigation to a SECOND independent Naive foreign VPS (different provider/route) and foreign Caddy transport and rate of TCP retransmissions. Two local shards sharing the same foreign IP cannot prevent a foreign Caddy or upstream network-wide failure.
+
+## INCIDENT: Naive shard cutover interrupted and automatic rollback failed health threshold (2026-10-29)
+Operator ran A/B: Naive original 48/48 success avg 1052ms, two-client shadow 48/48 avg 965ms, Mieru 48/48 avg 1058ms; the shadow showed better latency but NOT tested at user load.
+Cutover validated current foreign credential parity and all staged services healthy. On rebooting ONLY `nm-naive-client` as gateway on :7993, its immediate postflight reported **4/5** HTTP204; old script incorrectly required **5/5**, so automatically restored the old single client. Original :7993 then passed only **1/3** of immediate HTTP204 requests. Because the old `restore()` returned that health result, the script printed `CRITICAL: Naive rollback failed`, even though the drop-in may have been removed and the original process restarted. **No evidence of overall failed systemd restore until service state is inspected; never assume from this message that all users lost access.**
+
+DO NOT immediately rerun cutover/rollback or restart shared XUDP, dispatcher, x-ui or Mieru. First inspect read-only:
+```sh
+sudo test -e /etc/systemd/system/nm-naive-client.service.d/90-naive-shards.conf && echo SHARDED || echo ORIGINAL
+systemctl show nm-naive-client.service -p ActiveState -p MainPID -p ExecStart --no-pager
+for s in nm-naive-client nm-naive-shard-a nm-naive-shard-b nm-naive-staging-gw dual-mieru-carrier dual-dispatcher dual-xudp-bridge x-ui;do echo "$s: $(systemctl is-active $s.service)";done
+sudo nm-ha status
+sudo dual health --full all
+```
+If `ORIGINAL` and ExecStart points to `naive-live.json` with active PID, the old client was restored but may be unstable. If `SHARDED`, investigate currently effective gateway and do not run `stage` again. If active service is missing, prioritize current-session preservation, HA Mieru path, and dedicated role-local recovery only after evidence.
+
+Fixed in later revisions:
+- Cutover waits 3 seconds for the fresh gateway, then uses repeated HTTP probes :7993 at least 8/10 and :7991 at least 6/8 plus backend sanity checks and up to 2 full-health attempts; isolated random HTTP loss no longer triggers an unnecessary SECOND Naive restart.
+- Restore success means original unit override removed, original ExecStart verified, and systemd service active; original SOCKS connectivity reported independently as `WARNING` if probe success below threshold.
+- Any uncertain/failed postflight still attempts original client restoration and never restarts shared dispatcher, XUDP bridge, Mieru or x-ui.
+This fixed code was CI validated, but HAS NOT BEEN APPLIED to live user service. Actual root cause of Naive's intermittent failures is still unconfirmed. Test real traffic before concluding local sharding is a definitive fix.
