@@ -25,13 +25,15 @@ if [[ -x /usr/local/x-ui/bin/xray-linux-amd64 ]]; then
 fi
 echo "=== Redacted active and stored Xray settings ==="
 python3 - <<'PY'
-import json, os, sqlite3, pathlib
+import json, os, sqlite3, pathlib, re
 from urllib.parse import quote
 
 def safe_tag(tag):
     # Inbound/outbound tags are needed for routing, but never print credential-like tags.
     if not isinstance(tag,str): return "(none)"
-    if not tag or len(tag)>80 or any(x in tag.lower() for x in ("secret","token","key=","uuid","password")):
+    if (not tag or len(tag)>80 or "@" in tag or
+        re.search(r"(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}",tag) or
+        any(x in tag.lower() for x in ("secret","token","key=","uuid","password"))):
         return "(redacted)"
     return tag
 
