@@ -5,6 +5,7 @@ from unittest import mock
 spec=importlib.util.spec_from_file_location("nm_ha",pathlib.Path(__file__).with_name("nm-ha-agent.py"))
 ha=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ha)
+REAL_SHARDING_LIVE=ha.sharding_live
 
 def outcome(n,m):
     def record(state):
@@ -61,7 +62,8 @@ class HATests(unittest.TestCase):
             "ExecStart=/usr/local/lib/dual-trust-mieru/mihomo "
             "-d /var/lib/dual-trust-mieru/naive-shards/live "
             "-f /etc/dual-trust-mieru/naive-shards/live.yaml\n")
-        with mock.patch.object(ha,"SHARD_OVERLAY",overlay):
+        with mock.patch.object(ha,"SHARD_OVERLAY",overlay), \
+             mock.patch.object(ha,"sharding_live",REAL_SHARDING_LIVE):
             self.assertTrue(ha.sharding_live(),
                 "a dead shard backend must be repaired, not make HA abort")
     def test_bad_backend_does_not_quarantine_entire_naive_role(self):
