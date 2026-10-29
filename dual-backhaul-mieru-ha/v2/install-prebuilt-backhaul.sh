@@ -8,8 +8,12 @@ if [[ $# -ne 1 ]]; then
   exit 2
 fi
 TAG="$1"
-[[ "$TAG" =~ ^dual-backhaul-v2-build-[0-9a-f]{12}$ ]] || {
-  echo "Invalid release tag" >&2
+# SHA256 was independently read back from the GitHub release asset metadata
+# after the full Go test/build CI job passed. Pin this exact immutable candidate.
+EXPECTED_TAG="dual-backhaul-v2-build-368d09411985"
+EXPECTED_SHA256="22e7929f920d71aace7e43311bbb33fe7c07c583080621d064f79a9d13460601"
+[[ "$TAG" == "$EXPECTED_TAG" ]] || {
+  echo "Unsupported release tag; refusing unpinned executable" >&2
   exit 2
 }
 for cmd in curl sha256sum python3; do
@@ -34,6 +38,11 @@ if not re.fullmatch(r'[0-9a-f]{64}  backhaul-custom-v2-linux-amd64\n',manifest):
     raise SystemExit("Invalid SHA256SUMS manifest; refusing downloaded file.")
 PY
 (cd "$WORK" && sha256sum --check SHA256SUMS)
+ACTUAL_SHA256="$(sha256sum "$WORK/backhaul-custom-v2-linux-amd64" | awk '{print $1}')"
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || {
+  echo "[x] Release executable hash differs from independently pinned SHA256!" >&2
+  exit 3
+}
 python3 - "$WORK/backhaul-custom-v2-linux-amd64" <<'PY'
 import sys
 h=open(sys.argv[1],"rb").read(20)
