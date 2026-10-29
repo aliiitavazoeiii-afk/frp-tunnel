@@ -17,7 +17,7 @@ mkdir -p /etc/dual-ha /opt/dual-ha/bin /var/lib/mita /run/dual-ha-mita
 chmod 0700 /etc/dual-ha
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-curl -fL --retry 3 "https://github.com/enfein/mieru/releases/download/v$VERSION/mita_$VERSION_linux_amd64.tar.gz" -o "$work/mita.tar.gz"
+curl -fL --retry 3 "https://github.com/enfein/mieru/releases/download/v$VERSION/mita_${VERSION}_linux_amd64.tar.gz" -o "$work/mita.tar.gz"
 echo "$SHA  $work/mita.tar.gz" | sha256sum -c -
 mkdir "$work/unpack"
 tar -xzf "$work/mita.tar.gz" -C "$work/unpack"
