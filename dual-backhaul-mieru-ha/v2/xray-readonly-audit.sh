@@ -19,6 +19,10 @@ PY
 else
  echo "Gateway health file not found"
 fi
+echo "=== Xray core version (non-sensitive) ==="
+if [[ -x /usr/local/x-ui/bin/xray-linux-amd64 ]]; then
+  /usr/local/x-ui/bin/xray-linux-amd64 version 2>/dev/null | head -n 1 || true
+fi
 echo "=== Redacted active and stored Xray settings ==="
 python3 - <<'PY'
 import json, os, sqlite3, pathlib
@@ -39,7 +43,8 @@ def report(cfg,source):
         print("  INBOUND", "tag=",safe_tag(ib.get("tag")),
               "port=",ib.get("port"),"protocol=",ib.get("protocol"),
               "security=",st.get("security"),
-              "clients=",len((ib.get("settings") or {}).get("clients") or []))
+              "clients=",len((ib.get("settings") or {}).get("clients") or []),
+              "clients_with_email=",sum(bool(u.get("email")) for u in ((ib.get("settings") or {}).get("clients") or []) if isinstance(u,dict)))
     obs=cfg.get("outbounds") or []
     print("  OUTBOUNDS_COUNT:",len(obs))
     for idx,ob in enumerate(obs):
