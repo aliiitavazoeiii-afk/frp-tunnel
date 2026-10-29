@@ -423,43 +423,48 @@ def ufw_rollback(ip: str, added: bool) -> None:
 def replace_backhaul(old_ip: str, new_ip: str, w: Path) -> None:
     candidate = backhaul_candidate_bundle(old_ip, new_ip, w)
     opened = False
-    stopped_old = False
+    old_stop_attempted = False
     started_new = False
+    new_enabled = False
+    original_bundle = (w / "backhaul.previous-bundle.env").read_bytes()
     try:
         prepped_remote_install("backhaul", new_ip, candidate)
         opened = ufw_allow_new(new_ip)
         print(color("  READY: old Backhaul is still live. Switching reverse client now...", "1;33"))
+        old_stop_attempted = True
         ssh(old_ip, "systemctl stop dual-ha-backhaul-client", timeout=25)
-        stopped_old = True
         ssh(new_ip, "systemctl start dual-ha-backhaul-client", timeout=25)
         started_new = True
         if not confirm_egress("backhaul", new_ip, seconds=45):
             raise RuntimeError("New Backhaul SOCKS :21001 could not prove correct foreign egress")
         # Persist staged new service on boot, then retire only old client.
+        # New service will survive reboot; old service must not return unexpectedly.
         ssh(new_ip, "systemctl enable dual-ha-backhaul-client", timeout=15)
-        atomic_write(ETC / "backhaul-bundle.env", candidate.read_bytes())
+        new_enabled = True
         ssh(old_ip, "systemctl disable dual-ha-backhaul-client", timeout=15)
+        atomic_write(ETC / "backhaul-bundle.env", candidate.read_bytes())
         print(color("  SUCCESS: Backhaul reverse client switched to %s" % new_ip, "1;32"))
         print("  Previous bundle backup: %s" % (w / "backhaul.previous-bundle.env"))
         print("  Keep the old foreign host available for manual rollback until stability verified.")
         print("  Review provider firewall: Iran TCP/18443 must permit the new foreign IP.")
         print("  Old UFW IP allow entry is NOT removed automatically.")
     except Exception:
-        if stopped_old:
+        if old_stop_attempted:
             print(color("  NEW BACKHAUL FAILED — INITIATING ROLLBACK TO OLD FOREIGN HOST", "1;31"))
-            if started_new:
-                try:
-                    ssh(new_ip, "systemctl stop dual-ha-backhaul-client", timeout=25)
-                except Exception as e:
-                    print("  WARNING: unable to stop new foreign reverse client:", type(e).__name__)
             try:
-                ssh(old_ip, "systemctl start dual-ha-backhaul-client", timeout=25)
+                # Always stop and disable the candidate to prevent stale reverse reconnection after reboot.
+                ssh(new_ip, "systemctl disable --now dual-ha-backhaul-client", timeout=25)
+            except Exception:
+                print(color("  WARNING: new foreign client may still be connected; inspect manually!", "1;31"))
+            try:
+                atomic_write(ETC / "backhaul-bundle.env", original_bundle)
+                ssh(old_ip, "systemctl enable --now dual-ha-backhaul-client", timeout=25)
                 if confirm_egress("backhaul", old_ip, seconds=35):
                     print(color("  ROLLBACK VERIFIED: old Backhaul egress restored", "1;32"))
                 else:
                     print(color("  URGENT: old Backhaul path did not recover; rely on Mieru.", "1;31"))
             except Exception:
-                print(color("  URGENT: failed to restart old Backhaul service; rely on Mieru.", "1;31"))
+                print(color("  URGENT: failed to restore old Backhaul service; rely on Mieru.", "1;31"))
         ufw_rollback(new_ip, opened)
         raise
     finally:
