@@ -84,3 +84,21 @@ At rounds 4,5,8 single Naive failed both targets; round 6 returned ~4sec. The sh
 5. Check immediately `sudo dual health --full all`, `sudo nm-ha status`, `sudo bash /opt/frp-tunnel-nm/dual-trust-mieru/nm-naive-shards-maintenance.sh status`. Observe at least ~30–60 minutes of *real traffic* to distinguish true resilience from a green fresh-client shadow.
 6. If degraded, to roll back during maintenance run `sudo bash /opt/frp-tunnel-nm/dual-trust-mieru/nm-naive-shards-maintenance.sh rollback`; another Naive-only restart will interrupt those sessions. Mieru/dispatcher/x-ui are not restarted.
 7. Do NOT claim full HA resilience to a common foreign Caddy outage. For that build second independent Naive foreign+DNS/provider in a later maintenance plan.
+
+## 2026-10-29 persistent Naive instability — targeted fix revised
+Operator reports Naive dropped repeatedly under live load over two days, manually restarting the Naive carrier restored it, and accumulated Mieru bytes grew roughly 2x Naive. That byte imbalance includes prior connections and does not mean per-new-connection RR is necessarily broken.
+
+The original sharded HA still had the following critical failure mode: when a Naive shard systemd unit was DOWN, `sharding_live()` threw an exception before probing/recovering the unit. Additionally, a RR gateway's few failed probes could falsely mark the *entire* Naive path DOWN even though a backend was still good, forcing full Mieru load. Both defects are addressed in the latest code and verified by unit tests.
+
+New conservative HA rules (only AFTER explicit sharding cutover, not during stage):
+1. If one backend fully fails two consecutive sweeps and the other Naive shard is HEALTHY, restart ONLY that backend, with persisted 30-minute cooldown. Mieru's health is no longer a prerequisite to repairing Naive itself.
+2. If one backend stays PARTIALLY DEGRADED for five consecutive sweeps while the other Naive shard is HEALTHY, allow ONE role-local backend restart per 30 minutes. This addresses long-lived partial failures that were not previously self-healed.
+3. If one backend is healthy, parent Naive status is DEGRADED rather than fully DOWN even if a small gateway RR probe sample is unlucky. Avoid unnecessary transfer of *all* users to Mieru.
+4. If both Naive backends are healthy but the local Naive gateway itself is fully DOWN in two consecutive sweeps, restart ONLY `nm-naive-client.service` gateway, capped at one per 30 minutes.
+5. If BOTH Naive backends are DOWN, do not restart both blindly; existing upper-level HA may select the verified healthy Mieru peer and report incident.
+6. After three healthy cycles on both backends and both parents, DUAL-AUTO is restored automatically. It does NOT rebalance established connections or reset historical byte counters.
+7. If an old shadow stage differs from the current `naive-live.json` endpoint/credentials (possibly after a foreign rotation), the Cutover refuses rather than deploying stale config. Config secrets are never printed.
+
+Production action order: update pinned GitHub checkout -> run `nm-install-manager.sh` and `nm-ha-install.sh` (both non-restarting) -> inspect `nm-ha status`, `shards status`, and `dual health --full all`. If shadow active, compare A/B again, then ONLY in a low-traffic maintenance window explicitly run `nm-naive-shards-maintenance.sh cutover` and enter `CUTOVER-NAIVE-SHARDS`. It restarts Naive gateway :7993 ONLY; x-ui, Dispatcher, shared XUDP Bridge and Mieru stay running, but existing Naive connections may reconnect. If cutover postflight fails, the script attempts an automatic original-Naive rollback. Manual rollback with `nm-naive-shards-maintenance.sh rollback` reverses this with another Naive-only restart. Run real-traffic audit after and observe a busy hour; synthetic stage is not equivalent to production stability. The Mieru native UDP fix is preserved, untouched.
+
+If issues persist under load despite two isolated local Naive clients, move investigation to a SECOND independent Naive foreign VPS (different provider/route) and foreign Caddy transport and rate of TCP retransmissions. Two local shards sharing the same foreign IP cannot prevent a foreign Caddy or upstream network-wide failure.
