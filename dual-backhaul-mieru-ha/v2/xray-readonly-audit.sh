@@ -32,7 +32,7 @@ def safe_tag(tag):
     # Inbound/outbound tags are needed for routing, but never print credential-like tags.
     if not isinstance(tag,str): return "(none)"
     if (not tag or len(tag)>80 or "@" in tag or
-        re.search(r"(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}",tag) or
+        re.search(r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}",tag) or
         any(x in tag.lower() for x in ("secret","token","key=","uuid","password"))):
         return "(redacted)"
     return tag
