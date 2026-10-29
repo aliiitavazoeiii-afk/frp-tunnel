@@ -6,7 +6,12 @@ set -Eeuo pipefail
 IRAN_IP="$1"
 [[ "$IRAN_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Usage: sudo bash foreign-mieru.sh IRAN_PUBLIC_IP"; exit 2; }
 if systemctl is-active --quiet mita 2>/dev/null; then echo "Existing mita service active: refusing shared install"; exit 3; fi
-if systemctl is-active --quiet dual-ha-mita 2>/dev/null; then echo "Dual HA Mita already running; refusing to rotate secrets"; exit 3; fi
+if [[ -e /etc/dual-ha/mita.json || -e /etc/dual-ha/mieru-bundle.env || -e /etc/systemd/system/dual-ha-mita.service ]]; then
+  echo "An existing staging Mita install was found; refusing to overwrite secrets."
+  echo "For the previous getUid(mita) failure run: sudo bash repair-foreign-mieru.sh"
+  exit 3
+fi
+if systemctl is-active --quiet dual-ha-mita 2>/dev/null; then echo "Dual HA Mita already running"; exit 3; fi
 if ss -Hlnpt '( sport = :28443 )' | grep -q LISTEN; then echo "Port 28443 occupied"; exit 3; fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -33,7 +38,20 @@ config={"portBindings":[{"port":28443,"protocol":"TCP"}],
 "loggingLevel":"WARN","dns":{"dualStack":"PREFER_IPv4"}}
 with open("/etc/dual-ha/mita.json","w") as f: json.dump(config,f,indent=2)
 PY
-chmod 0600 /etc/dual-ha/mita.json
+# Mita's secured RPC socket requires a real system account named 'mita'.
+if ! getent group mita >/dev/null; then
+  groupadd --system mita
+fi
+if ! id -u mita >/dev/null 2>&1; then
+  useradd --system --gid mita --home-dir /nonexistent --no-create-home \
+    --shell /usr/sbin/nologin mita
+fi
+[[ "$(id -gn mita)" == "mita" ]] || { echo "mita primary group mismatch"; exit 3; }
+chown root:mita /etc/dual-ha
+chmod 0750 /etc/dual-ha
+chown root:mita /etc/dual-ha/mita.json
+chmod 0640 /etc/dual-ha/mita.json
+install -d -m 0750 -o mita -g mita /var/lib/mita
 cat >/etc/dual-ha/mieru-bundle.env <<EOF
 MIERU_REMOTE_IP='152.237.230.248'
 MIERU_TCP_PORT='28443'
@@ -48,6 +66,13 @@ Wants=network-online.target
 After=network-online.target
 [Service]
 Type=simple
+User=mita
+Group=mita
+UMask=0077
+RuntimeDirectoryMode=0750
+StateDirectory=mita
+StateDirectoryMode=0750
+NoNewPrivileges=true
 Environment=MITA_CONFIG_JSON_FILE=/etc/dual-ha/mita.json
 Environment=MITA_UDS_PATH=/run/dual-ha-mita/mita.sock
 RuntimeDirectory=dual-ha-mita
