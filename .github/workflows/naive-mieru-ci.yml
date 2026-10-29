@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash -n dual-trust-mieru/nm-iran.sh dual-trust-mieru/nm-autoheal.sh dual-trust-mieru/nm-cli.sh dual-trust-mieru/nm-health.sh dual-trust-mieru/nm-retire-trust.sh dual-trust-mieru/install-foreign-lane3-naive.sh dual-trust-mieru/nm-rr-maintenance.sh dual-trust-mieru/nm-manager.sh dual-trust-mieru/nm-foreign-wizard.sh dual-trust-mieru/nm-install-manager.sh dual-trust-mieru/nm-adaptive-install.sh dual-trust-mieru/nm-naive-shards-maintenance.sh dual-trust-mieru/nm-fresh-iran.sh dual-trust-mieru/nm-fresh-attach-xui.sh dual-trust-mieru/nm-helper.sh dual-trust-mieru/nm-ha-install.sh dual-trust-mieru/nm-naive-inspect.sh
-      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py dual-trust-mieru/nm-naive-shards-compare.py dual-trust-mieru/nm-mieru-udp-diagnose.py dual-trust-mieru/nm-mieru-udp-diagnose-test.py dual-trust-mieru/nm-mieru-native-udp-canary.py dual-trust-mieru/nm-mieru-native-udp-canary-test.py dual-trust-mieru/nm-mieru-native-udp-cutover.py
+      - run: python3 -m py_compile dual-trust-mieru/nm-pool-balance.py dual-trust-mieru/nm-replace.py dual-trust-mieru/nm-stats.py dual-trust-mieru/nm-adaptive-core.py dual-trust-mieru/nm-adaptive-canary.py dual-trust-mieru/nm-adaptive-test.py dual-trust-mieru/nm-naive-fresh-client-diagnose.py dual-trust-mieru/nm-live-audit.py dual-trust-mieru/nm-live-audit-test.py dual-trust-mieru/nm-ha-agent.py dual-trust-mieru/nm-ha-telemetry.py dual-trust-mieru/nm-ha-test.py dual-trust-mieru/nm-naive-shards-compare.py dual-trust-mieru/nm-mieru-udp-diagnose.py dual-trust-mieru/nm-mieru-udp-diagnose-test.py dual-trust-mieru/nm-mieru-native-udp-canary.py dual-trust-mieru/nm-mieru-native-udp-canary-test.py dual-trust-mieru/nm-mieru-native-udp-cutover.py dual-trust-mieru/nm-app-paths-diagnose.py
       - run: test "$(grep -c 'allow xudp-trust.internal' dual-trust-mieru/install-foreign-lane3-naive.sh)" -eq 1
       - run: "! grep -Eq 'systemctl (stop|restart) (x-ui|dual-mieru-carrier|dual-xudp-bridge|dual-dispatcher)' dual-trust-mieru/nm-iran.sh"
       - run: "! grep -Eq 'systemctl (stop|restart|disable|enable) (x-ui|dual-mieru-carrier|dual-xudp-bridge|nm-naive-client)' dual-trust-mieru/nm-rr-maintenance.sh"
@@ -55,6 +55,28 @@ jobs:
                        "atom(BACKUP,original)", "restart(original)", "test_xray(candidate)"):
               assert item in src,item
           print("Mieru native UDP single-rule change + cutover guards PASS")
+          PY
+      - name: Validate application-path diagnostic and DNS size tests
+        run: |
+          python3 - <<'PY'
+          import importlib.util,pathlib,struct
+          p=pathlib.Path("dual-trust-mieru/nm-app-paths-diagnose.py")
+          spec=importlib.util.spec_from_file_location("diag",p)
+          m=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          qid,small=m.build_dns_query(0)
+          _,big=m.build_dns_query(1200)
+          assert len(small)<100
+          assert len(big)==1200
+          assert struct.unpack("!H",big[10:12])[0]==1
+          assert 0<=qid<65536
+          assert {x[0] for x in m.TARGETS}=={
+              "TG_API","TG_WEB","YT_HOME","YT_IMAGE","IG_CONTROL"}
+          src=p.read_text()
+          for forbidden in ("systemctl restart","systemctl stop","systemctl reload",
+                            "iptables","nft -f","/proxies/DUAL", "os.replace("):
+              assert forbidden not in src,forbidden
+          print("Read-only application path differential: PASS")
           PY
       - name: Check native Mieru Xray shadow doesn't write production
         run: |
