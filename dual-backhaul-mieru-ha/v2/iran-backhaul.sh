@@ -4,7 +4,21 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 DOMAIN="${1:-}"
-[[ "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || { echo "Usage: sudo bash iran-backhaul.sh backbone.example.com"; exit 2; }
+IRAN_IP="${2:-94.184.4.38}"
+FOREIGN_IP="${3:-152.237.230.159}"
+[[ "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || { echo "Usage: sudo bash iran-backhaul.sh DOMAIN IRAN_PUBLIC_IP BACKHAUL_FOREIGN_IP"; exit 2; }
+for value in "$IRAN_IP" "$FOREIGN_IP"; do
+  python3 - "$value" <<'PY'
+import ipaddress,sys
+try:
+  ip=ipaddress.ip_address(sys.argv[1])
+  if ip.version != 4 or not ip.is_global:
+    raise ValueError("not a public IPv4")
+except ValueError as err:
+  raise SystemExit("Invalid public IPv4: "+str(err))
+PY
+done
+[[ "$IRAN_IP" != "$FOREIGN_IP" ]] || { echo "Iran and foreign IPv4 must differ"; exit 2; }
 # Fail safely on reruns: do not rotate secret paths and disconnect reverse peers.
 for path in /etc/dual-ha/backhaul-bundle.env /etc/dual-ha/backhaul-iran.toml \
   /etc/systemd/system/dual-ha-backhaul.service \
@@ -24,7 +38,6 @@ for p in 18443 19080 19081 21001; do
 done
 # This deployment uses the Iran public IP confirmed by the operator.
 # Avoid depending on external IPv4 echo websites (often inaccessible inside Iran).
-IRAN_IP=94.184.4.38
 OBSERVED_IP="$(curl -4fsS --connect-timeout 3 --max-time 6 https://api.ipify.org 2>/dev/null || true)"
 if [[ -n "$OBSERVED_IP" && "$OBSERVED_IP" != "$IRAN_IP" ]]; then
   echo "[x] Iran public IP mismatch: observed $OBSERVED_IP, configured $IRAN_IP" >&2
@@ -67,7 +80,7 @@ BH_IRAN_IP='$IRAN_IP'
 BH_TOKEN='$TOKEN'
 BH_CONTROL_PATH='$CONTROL'
 BH_TUNNEL_PATH='$TUNNEL'
-BH_FOREIGN_IP='152.237.230.159'
+BH_FOREIGN_IP='$FOREIGN_IP'
 BH_TLS_PORT='18443'
 EOF
 chmod 0600 /etc/dual-ha/backhaul-bundle.env
@@ -185,7 +198,7 @@ haproxy -c -f /etc/dual-ha/backhaul-router.cfg
 systemctl daemon-reload
 systemctl enable --now dual-ha-backhaul dual-ha-backhaul-router dual-ha-backhaul-tls
 if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
-  ufw allow from 152.237.230.159 to any port 18443 proto tcp
+  ufw allow from "$FOREIGN_IP" to any port 18443 proto tcp
 fi
 sleep 2
 for service in dual-ha-backhaul dual-ha-backhaul-router dual-ha-backhaul-tls; do
@@ -193,5 +206,5 @@ for service in dual-ha-backhaul dual-ha-backhaul-router dual-ha-backhaul-tls; do
 done
 curl -fsS --resolve "$DOMAIN:18443:$IRAN_IP" --max-time 10 "https://$DOMAIN:18443/" >/dev/null
 echo "Iran Backhaul isolated staging ready; NO Xray/443 change. Copy bundle to Foreign-1:"
-echo "scp /etc/dual-ha/backhaul-bundle.env root@152.237.230.159:/root/dual-ha-backhaul-bundle.env"
-echo "Foreign-1 will connect to Iran:18443. Open this port in the Iran provider firewall if required."
+echo "scp /etc/dual-ha/backhaul-bundle.env root@$FOREIGN_IP:/root/dual-ha-backhaul-bundle.env"
+echo "Foreign-1 $FOREIGN_IP will connect to Iran $IRAN_IP:18443. Open this port in the Iran provider firewall if required."
