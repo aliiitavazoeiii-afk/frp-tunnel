@@ -31,6 +31,11 @@ umask 077
 [[ -s "$ROOT/bundle.json" ]] || die 'current Maya4 bundle missing'
 [[ -s "$ROOT/naive.json" && -s "$ROOT/xudp-router.json" ]] || die 'current Maya4 tunnel config missing'
 [[ -x "$LOCAL_REPLACE" ]] || die 'local replacement engine missing; reinstall the Maya4 dashboard helper'
+# Fail before SSH/package install if the local candidate engine is incomplete.
+[[ -s /usr/local/lib/maya4-naive/common.sh ]] ||
+  die 'local common.sh missing; run updated enable-replace-command.sh before trying again'
+bash -n /usr/local/lib/maya4-naive/common.sh "$LOCAL_REPLACE" ||
+  die 'local candidate helper syntax invalid'
 [[ -x "$HEALTH" ]] || die 'Maya4 health helper missing'
 for unit in x-ui maya4-naive-client maya4-xudp-router; do
   systemctl is-active --quiet "$unit.service" || die "inactive service before replacement: $unit"
