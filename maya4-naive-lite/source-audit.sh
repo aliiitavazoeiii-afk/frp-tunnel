@@ -54,6 +54,13 @@ grep -q -- '--non-interactive' install-foreign.sh
 grep -q "DOMAIN='naive4.biya2film.top'" replace-foreign-auto.sh
 grep -q 'install-foreign.sh --public-ip "$IP" --domain "$DOMAIN" --email "$EMAIL" --non-interactive' replace-foreign-auto.sh
 grep -q '"$LOCAL_REPLACE" "$TMP"' replace-foreign-auto.sh
+# The live helper runs from /usr/local/lib/maya4-naive and sources common.sh
+# by dirname. Validate both the installer and fail-fast preflight.
+grep -Fq 'install -m 0755 "$SRC/common.sh" "$LIB/common.sh"' enable-replace-command.sh
+grep -Fq 'for f in common.sh manager.sh' enable-replace-command.sh
+grep -Fq '[[ -s /usr/local/lib/maya4-naive/common.sh ]]' replace-foreign-auto.sh
+grep -Fq 'bash -n /usr/local/lib/maya4-naive/common.sh "$LOCAL_REPLACE"' replace-foreign-auto.sh
+grep -Fq 'source "$B/common.sh"' replace-foreign.sh
 grep -q 'Replace foreign server (enter new IP only)' manager.sh
 grep -q 'exec /usr/local/sbin/maya4-manager' enable-replace-command.sh
 grep -q 'exec /usr/local/sbin/maya4-replace-auto' enable-replace-command.sh
