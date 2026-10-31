@@ -39,6 +39,14 @@ grep -q 'UDP/XUDP :7996' health.sh
 grep -q 'maya4-naive-endpoint.service' install-foreign.sh
 grep -q 'maya4-xudp.service' install-foreign.sh
 grep -q 'RESUME_EXISTING=1' install-foreign.sh
+grep -q 'KEEP_BUNDLE=0' install-foreign.sh
+grep -q 'Existing completed foreign deployment found' install-foreign.sh
+grep -q 'existing bundle identity differs' install-foreign.sh
+grep -q 'existing bundle credentials or UUID differ' install-foreign.sh
+grep -q 'endpoint service does not reference expected Caddyfile' install-foreign.sh
+grep -q 'XUDP service does not reference expected config' install-foreign.sh
+grep -q 'if (( ! KEEP_BUNDLE ));then' install-foreign.sh
+grep -q 'no files removed' install-foreign.sh
 grep -q 'Any HTTP status is acceptable here' install-foreign.sh
 ! grep -q 'curl -fsS.*resolve.*DOMAIN:443' install-foreign.sh
 grep -q 'xudp-maya4.internal' install-foreign.sh
