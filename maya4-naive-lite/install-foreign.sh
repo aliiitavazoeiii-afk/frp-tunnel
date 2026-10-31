@@ -58,6 +58,10 @@ if [[ -d "$D" && -s "$D/Caddyfile" && -s "$D/xray.json" ]] \
   else
     log 'Healthy partial foreign deployment found; resuming bundle creation'
   fi
+  systemctl show maya4-naive-endpoint.service -p ExecStart --value | grep -Fq "$D/Caddyfile" ||
+    die 'endpoint service does not reference expected Caddyfile'
+  systemctl show maya4-xudp.service -p ExecStart --value | grep -Fq "$D/xray.json" ||
+    die 'XUDP service does not reference expected config'
   RESUME_EXISTING=1
 elif [[ -e "$D" || -e "$BUNDLE" ]]; then
   log 'Existing state:'
@@ -221,6 +225,23 @@ else
   [[ "$XUDP_UUID" =~ ^[0-9a-fA-F-]{36}$ ]] || die 'could not recover existing XUDP UUID'
 fi
 
+if (( KEEP_BUNDLE ));then
+  FOREIGN_CADDY="$D/Caddyfile" FOREIGN_XRAY="$D/xray.json" FOREIGN_BUNDLE="$BUNDLE" python3 <<'PY'
+import json,os,pathlib,sys
+c=pathlib.Path(os.environ["FOREIGN_CADDY"]).read_text()
+auth=[line.strip().split() for line in c.splitlines() if line.strip().startswith("basic_auth ")]
+if len(auth)!=1 or len(auth[0])!=3:
+    sys.exit("ERROR: existing Caddy credentials cannot be validated")
+xr=json.loads(pathlib.Path(os.environ["FOREIGN_XRAY"]).read_text())
+uuids=[u.get("id") for x in xr.get("inbounds",[])
+       if x.get("tag")=="maya4-xudp-in" for u in x.get("settings",{}).get("users",[])]
+bundle=json.loads(pathlib.Path(os.environ["FOREIGN_BUNDLE"]).read_text())
+if len(uuids)!=1 or [bundle.get("username"),bundle.get("password")]!=auth[0][1:] or bundle.get("xudp_uuid")!=uuids[0]:
+    sys.exit("ERROR: existing bundle credentials or UUID differ from foreign services")
+print("Existing Caddy/XUDP credentials match bundle; no secrets displayed.")
+PY
+fi
+
 log 'Waiting for TLS readiness'
 ready=0
 for _ in $(seq 1 90); do
@@ -239,6 +260,7 @@ done
   die 'TLS handshake did not become ready'
 }
 
+if (( ! KEEP_BUNDLE ));then
 export PUBLIC_IP DOMAIN EMAIL USER_NAME USER_PASS XUDP_UUID
 python3 - "$BUNDLE" <<'PY'
 import json,os,sys
@@ -258,6 +280,7 @@ with open(sys.argv[1],"w") as f:
     json.dump(obj,f,indent=2,sort_keys=True)
 os.chmod(sys.argv[1],0o600)
 PY
+fi
 unset USER_PASS XUDP_UUID
 
 log 'SUCCESS: Maya4 Naive foreign is ready'
