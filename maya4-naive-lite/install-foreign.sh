@@ -40,14 +40,34 @@ fi
 D=/etc/maya4-naive-foreign
 BUNDLE=/root/maya4-naive-client.json
 RESUME_EXISTING=0
+KEEP_BUNDLE=0
 
-if [[ -d "$D" && ! -s "$BUNDLE" && -s "$D/Caddyfile" && -s "$D/xray.json" ]] \
+if [[ -d "$D" && -s "$D/Caddyfile" && -s "$D/xray.json" ]] \
    && systemctl is-active --quiet maya4-naive-endpoint.service \
    && systemctl is-active --quiet maya4-xudp.service; then
+  grep -Fxq ":443, $DOMAIN {" "$D/Caddyfile" || die 'existing Caddy domain differs; do not overwrite'
+  grep -Fxq "  tls $EMAIL" "$D/Caddyfile" || die 'existing certificate email differs; do not overwrite'
+  if [[ -s "$BUNDLE" ]]; then
+    jq -e --arg ip "$PUBLIC_IP" --arg domain "$DOMAIN" --arg email "$EMAIL" \
+      '.version==1 and .kind=="maya4-naive" and .public_ip==$ip and .domain==$domain and .cert_email==$email and .port==443' \
+      "$BUNDLE" >/dev/null || die 'existing bundle identity differs; do not overwrite'
+    KEEP_BUNDLE=1
+    log 'Existing completed foreign deployment found; validating and reusing bundle'
+  elif [[ -e "$BUNDLE" ]]; then
+    die 'existing bundle file is incomplete; inspect before reinstalling'
+  else
+    log 'Healthy partial foreign deployment found; resuming bundle creation'
+  fi
   RESUME_EXISTING=1
-  log 'Detected healthy partial Maya4 foreign install; resuming final validation/bundle creation'
 elif [[ -e "$D" || -e "$BUNDLE" ]]; then
-  die 'existing Maya4 Naive foreign state found but it is not safely resumable; inspect before reinstalling'
+  log 'Existing state:'
+  for file in "$D/Caddyfile" "$D/xray.json" "$BUNDLE"; do
+    if [[ -s "$file" ]];then log "present: $file";else log "missing/empty: $file";fi
+  done
+  for unit in maya4-naive-endpoint maya4-xudp; do
+    log "$unit: $(systemctl is-active "$unit.service" 2>/dev/null || true)"
+  done
+  die 'existing Maya4 foreign state is partial or conflicting; no files removed'
 fi
 
 if (( RESUME_EXISTING == 0 )); then
