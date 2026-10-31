@@ -8,10 +8,17 @@ BUNDLE="$1"
 if ss -Hlnpt '( sport = :21002 )' | grep -q LISTEN; then
   echo "21002 occupied; refusing to replace a live SOCKS endpoint"; exit 3
 fi
-grep -Eq "^MIERU_REMOTE_IP='152[.]237[.]230[.]248'$" "$BUNDLE" || { echo "Unexpected Foreign-2 identity"; exit 3; }
+grep -Eq "^MIERU_REMOTE_IP='([0-9]{1,3}[.]){3}[0-9]{1,3}'$" "$BUNDLE" || { echo "Invalid Foreign-2 address in bundle"; exit 3; }
 # shellcheck source=/dev/null
 source "$BUNDLE"
 [[ "$MIERU_TCP_PORT" == 28443 && "$MIERU_USER" =~ ^[A-Za-z0-9_-]+$ && "$MIERU_PASSWORD" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid bundle"; exit 3; }
+EXPECTED_FOREIGN_IP="${2:-$MIERU_REMOTE_IP}"
+[[ "$MIERU_REMOTE_IP" == "$EXPECTED_FOREIGN_IP" ]] || { echo "Foreign Mieru IP mismatch: supplied $EXPECTED_FOREIGN_IP vs bundle $MIERU_REMOTE_IP"; exit 3; }
+python3 - "$MIERU_REMOTE_IP" <<'PY'
+import ipaddress,sys
+ip=ipaddress.ip_address(sys.argv[1])
+assert ip.version==4 and ip.is_global,"Invalid foreign public IPv4"
+PY
 VERSION=3.39.0
 SHA=81f549ffd7be2df6958b1051aad10e58884889d92e691c1e43822c42091d1dfe
 mkdir -p /etc/dual-ha /opt/dual-ha/bin
