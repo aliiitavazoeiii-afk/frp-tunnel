@@ -2,8 +2,10 @@
 # Read-only Backhaul reverse preflight on Iran or Foreign-1.
 # No packages, firewall, systemd, Xray or certificate modifications.
 set -Eeuo pipefail
-ROLE="$1"
-DOMAIN="$(echo "$*" | awk '{print $2}')"
+ROLE="${1:-}"
+DOMAIN="${2:-}"
+IRAN_IP="${3:-94.184.4.38}"
+FOREIGN_IP="${4:-152.237.230.159}"
 if [[ "$ROLE" != "iran" && "$ROLE" != "foreign" ]]; then
   echo "Usage: bash preflight-backhaul.sh iran BACKHAUL_DOMAIN"
   echo "   or: bash preflight-backhaul.sh foreign"
@@ -38,12 +40,12 @@ if [[ "$ROLE" == "iran" ]]; then
   [[ -n "$DOMAIN" ]] || { echo "DOMAIN_REQUIRED: Please choose a dedicated DNS-only hostname pointing to Iran."; exit 2; }
   [[ "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || { echo "Invalid hostname"; exit 2; }
   echo "=== Public IP and direct DNS ==="
-  echo "Expected Iran public IPv4: 94.184.4.38"
-  echo "Expected Foreign-1 public IPv4: 152.237.230.159"
+  echo "Expected Iran public IPv4: $IRAN_IP"
+  echo "Expected Foreign-1 public IPv4: $FOREIGN_IP"
   DNS_IPS="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u || true)"
   echo "$DOMAIN -> $DNS_IPS"
-  if ! grep -Fxq '94.184.4.38' <<<"$DNS_IPS"; then
-    echo "NOT READY: A record must point to Iran 94.184.4.38 (DNS only, no proxy)."
+  if [[ "$DNS_IPS" != "$IRAN_IP" ]]; then
+    echo "NOT READY: A record must point ONLY to Iran $IRAN_IP (DNS only, no proxy)."
   else
     echo "DNS_OK"
   fi
@@ -58,5 +60,5 @@ if [[ "$ROLE" == "iran" ]]; then
   echo "Important: no configuration was modified, and public TCP/443 must remain Xray."
 else
   echo "Foreign-1 should have 11080 free until its isolated loopback Dante SOCKS starts."
-  echo "Reverse TLS carrier will connect to Iran 94.184.4.38:18443."
+  echo "Reverse TLS carrier will connect to Iran $IRAN_IP:18443."
 fi
