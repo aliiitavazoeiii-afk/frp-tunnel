@@ -9,7 +9,7 @@ SRC=/opt/frp-tunnel/maya4-naive-lite
 CLI=/usr/local/bin/maya4
 LIB=/usr/local/lib/maya4-naive
 
-for f in manager.sh replace-foreign-auto.sh replace-foreign.sh health.sh attach-xui.sh; do
+for f in common.sh manager.sh replace-foreign-auto.sh replace-foreign.sh health.sh attach-xui.sh; do
   [[ -s "$SRC/$f" ]] || { echo "Missing source file: $SRC/$f" >&2; exit 1; }
   bash -n "$SRC/$f"
 done
@@ -18,7 +18,12 @@ mkdir -p "$LIB"
 chmod 0755 "$LIB"
 install -m 0755 "$SRC/manager.sh" /usr/local/sbin/maya4-manager
 install -m 0755 "$SRC/replace-foreign-auto.sh" /usr/local/sbin/maya4-replace-auto
+# replace-foreign.sh sources common.sh from its installed directory.
+# Keep this dependency colocated, or candidate testing aborts before cutover.
+install -m 0755 "$SRC/common.sh" "$LIB/common.sh"
 install -m 0755 "$SRC/replace-foreign.sh" "$LIB/replace-foreign.sh"
+test -s "$LIB/common.sh" || { echo "Missing installed common.sh" >&2; exit 1; }
+bash -n "$LIB/common.sh"
 install -m 0755 "$SRC/health.sh" /usr/local/sbin/maya4-health
 install -m 0755 "$SRC/attach-xui.sh" /usr/local/sbin/maya4-attach
 
