@@ -21,7 +21,6 @@ import time
 
 import dual
 
-IRAN_EXPECTED = "5.10.249.206"
 GUARD = Path("/usr/local/sbin/dual-ha-rotation-guard.sh")
 UNIT = Path("/etc/systemd/system/dual-ha-rotation-guard.service")
 OLD_GUARD = Path("/usr/local/sbin/bh4-backhaul-guard.sh")
@@ -103,8 +102,8 @@ def authorize_new(ip):
 
 def run_guard(iran):
     """Always reconstruct the guarded allowlist from the currently active bundle."""
-    if iran != IRAN_EXPECTED:
-        raise RuntimeError("Guard installer is restricted to Maya4; detected different Iran IP")
+    if iran != ipaddr(dual.iran_ip()):
+        raise RuntimeError("Configured Iran public IPv4 changed during rotation; refusing guard update")
     guard_code = r'''#!/usr/bin/env bash
 set -Eeuo pipefail
 B=/etc/dual-ha/backhaul-bundle.env
@@ -124,7 +123,7 @@ echo "Backhaul source allowlist: $IP"
 '''
     dual.atomic_write(GUARD, guard_code.encode())
     GUARD.chmod(0o700)
-    # If Maya4's legacy guard remains enabled, it must use the new dynamic rule.
+    # If a legacy Maya4 guard remains enabled, delegate it to the dynamic rule.
     if OLD_GUARD.exists():
         dual.atomic_write(OLD_GUARD, b'#!/usr/bin/env bash\nexec /usr/local/sbin/dual-ha-rotation-guard.sh\n')
         OLD_GUARD.chmod(0o700)
@@ -132,6 +131,7 @@ echo "Backhaul source allowlist: $IP"
         UNIT.write_text(
             "[Unit]\nDescription=Dual HA dynamic backhaul source guard\n"
             "Before=dual-ha-backhaul-tls.service\n"
+            "After=maya3-backhaul-guard.service\n"
             "[Service]\nType=oneshot\n"
             "ExecStart=/usr/local/sbin/dual-ha-rotation-guard.sh\n"
             "RemainAfterExit=yes\n"
@@ -223,7 +223,7 @@ def rotate_backhaul(old, new, iran, work):
 
 def main():
     if os.geteuid() != 0:
-        raise RuntimeError("Run with sudo/root on Maya4")
+        raise RuntimeError("Run with sudo/root on the Iran Dual HA host")
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("role", choices=["backhaul", "mieru"])
@@ -232,8 +232,8 @@ def main():
     new = ipaddr(a.ip or input("New foreign VPS IP: ").strip())
     old = dual.safety_checks(a.role, new, check_ssh=False)
     iran = dual.iran_ip()
-    if iran != IRAN_EXPECTED:
-        raise RuntimeError("Only configured Maya4 is supported; no changes made")
+    if iran != ipaddr(iran):
+        raise RuntimeError("Configured Iran IP must be a public IPv4; no changes made")
     print("Current %s: %s -> %s" % (a.role, old, new))
     print("Old host is NOT required for SSH. Existing connections on changed path may drop.")
     if input("Type REPLACE %s to proceed: " % a.role.upper()).strip() != "REPLACE " + a.role.upper():
