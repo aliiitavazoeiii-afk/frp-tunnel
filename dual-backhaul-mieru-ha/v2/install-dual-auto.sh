@@ -19,7 +19,7 @@ IRAN="$(sed -n "s/^BH_IRAN_IP='\([0-9.]*\)'$/\1/p" /etc/dual-ha/backhaul-bundle.
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
-BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/dual-auto-one-password/dual-backhaul-mieru-ha/v2
+BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/6de0ffcbd5a730855d991497a3ea75373b73a974/dual-backhaul-mieru-ha/v2
 curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 \
   "$BASE/dual_auto.py" -o "$TMPDIR/dual_auto.py"
 python3 -m py_compile "$TMPDIR/dual_auto.py"
