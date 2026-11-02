@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the GitHub-hosted one-password Auto Replace menu into an existing Dual HA v2.
+# Installs the GitHub-hosted Auto Replace menu into an existing Iran Dual HA v2 (Maya3/Maya4 compatible).
 # No x-ui, Reality, HAProxy, Backhaul, or Mieru service restart.
 set -Eeuo pipefail
 [[ "$EUID" -eq 0 ]] || { echo "Run as root: sudo bash install-dual-auto.sh"; exit 2; }
@@ -15,11 +15,20 @@ LIVE="$HELPER/dual.py"
   echo "Live Dual HA config missing; refusing"; exit 2;
 }
 IRAN="$(sed -n "s/^BH_IRAN_IP='\([0-9.]*\)'$/\1/p" /etc/dual-ha/backhaul-bundle.env)"
-[[ "$IRAN" == "5.10.249.206" ]] || { echo "Not Maya4 (Iran $IRAN); refusing"; exit 2; }
+python3 - "$IRAN" <<'PY'
+import ipaddress,sys
+try:
+    host=ipaddress.ip_address(sys.argv[1])
+    if not isinstance(host, ipaddress.IPv4Address) or not host.is_global:
+        raise ValueError("Configured host is not a public IPv4")
+except ValueError as exc:
+    raise SystemExit("Invalid BH_IRAN_IP: " + str(exc))
+PY
+echo "Detected configured Iran Dual HA host: $IRAN"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
-BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/6de0ffcbd5a730855d991497a3ea75373b73a974/dual-backhaul-mieru-ha/v2
+BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/839c8b5c8791bbb56d597452f501981f77040bfe/dual-backhaul-mieru-ha/v2
 curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 \
   "$BASE/dual_auto.py" -o "$TMPDIR/dual_auto.py"
 python3 -m py_compile "$TMPDIR/dual_auto.py"
