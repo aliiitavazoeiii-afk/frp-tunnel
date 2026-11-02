@@ -28,7 +28,7 @@ echo "Detected configured Iran Dual HA host: $IRAN"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
-BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/839c8b5c8791bbb56d597452f501981f77040bfe/dual-backhaul-mieru-ha/v2
+BASE=https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/71894c52b6480a3fcb3127e1351c86fa12bfe64a/dual-backhaul-mieru-ha/v2
 curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 \
   "$BASE/dual_auto.py" -o "$TMPDIR/dual_auto.py"
 python3 -m py_compile "$TMPDIR/dual_auto.py"
