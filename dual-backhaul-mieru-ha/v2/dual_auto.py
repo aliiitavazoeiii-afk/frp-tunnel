@@ -57,6 +57,14 @@ def authorize_new(ip):
     except ImportError:
         raise RuntimeError("Missing python3-paramiko; run the provided installer")
 
+    # A previous failed attempt may already have installed our key securely.
+    try:
+        if dual.ssh(ip, "echo AUTO_SSH_OK", timeout=15).strip() == "AUTO_SSH_OK":
+            print("Reusing existing verified SSH key; no password needed.")
+            return
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+
     pub = ensure_key()
     password = getpass.getpass("NEW VPS root SSH password (not saved): ")
     if not password:
@@ -89,9 +97,14 @@ def authorize_new(ip):
             "grep -Fxq {key} /root/.ssh/authorized_keys || "
             "printf '%s\\n' {key} >>/root/.ssh/authorized_keys"
         ).format(key=shlex.quote(pub))
-        _, stdout, stderr = client.exec_command(cmd, timeout=20)
-        if stdout.channel.recv_exit_status():
-            raise RuntimeError("SSH key authorization failed: " + stderr.read().decode()[-250:])
+        stdin, stdout, stderr = client.exec_command(cmd, timeout=20)
+        status = stdout.channel.recv_exit_status()
+        err = stderr.read().decode()[-250:] if status else ""
+        stdin.close()
+        stdout.close()
+        stderr.close()
+        if status:
+            raise RuntimeError("SSH key authorization failed: " + err)
     finally:
         password = None
         client.close()
@@ -156,6 +169,60 @@ def del_rule(rule):
     sh(["iptables", "-w", "-D", "INPUT", *rule], check=False)
 
 
+def prepared_backhaul_install(ip, iran, candidate):
+    """Stage into a unique file: never clobber or reject a stale bundle from a prior attempt."""
+    preflight = r"""set -eu
+if systemctl is-active --quiet dual-ha-backhaul-client 2>/dev/null ||
+   systemctl is-active --quiet dual-ha-mita 2>/dev/null; then
+  echo 'REFUSED: An existing tunnel service is active on the new VPS.' >&2
+  exit 21
+fi
+if [ -e /etc/dual-ha/backhaul-foreign.toml ] ||
+   [ -e /etc/dual-ha/mita.json ] ||
+   [ -d /opt/dual-ha-src/frp-tunnel ]; then
+  echo 'REFUSED: A previous foreign installation is partially/completely present.' >&2
+  echo 'Inspect it before retrying; no files have been removed.' >&2
+  exit 22
+fi
+if ss -Hlnpt '( sport = :11080 )' | grep -q LISTEN; then
+  echo 'REFUSED: Foreign local SOCKS 11080 already in use.' >&2
+  exit 23
+fi
+"""
+    dual.ssh(ip, preflight, timeout=20)
+    # The old helper used "test ! -e /root/dual-ha-backhaul-bundle.env".
+    # This rejected hosts with harmless leftover bundle files and hid the reason.
+    suffix = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stage = "/root/.dual-ha-backhaul-candidate-%s-%s.env" % (suffix, os.getpid())
+    print("Uploading private candidate bundle to a unique location...", flush=True)
+    dual.scp(str(candidate), "root@" + ip + ":" + stage, timeout=50)
+    expected = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    actual = dual.ssh(ip, "chmod 600 " + shlex.quote(stage) +
+                      "; sha256sum " + shlex.quote(stage) + " | cut -d' ' -f1", timeout=15).strip()
+    if actual != expected:
+        raise RuntimeError("Candidate bundle transfer hash mismatch; no switch performed")
+    args = ("bash -s -- --role backhaul --iran-ip %s --foreign-ip %s"
+            " --bundle %s --prepare" %
+            (shlex.quote(iran), shlex.quote(ip), shlex.quote(stage)))
+    print("Installing fresh foreign Backhaul in PREPARE mode (no reverse connection yet)...", flush=True)
+    p = subprocess.run(["ssh", *dual.SSH_OPTS, "root@" + ip, args],
+                       input=dual.FOREIGN_INSTALL.read_bytes(),
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=420)
+    log = (p.stdout + b"\n" + p.stderr).decode(errors="replace")
+    if p.returncode:
+        # Do not display private bundle values even if a future installer changes.
+        for line in candidate.read_text().splitlines():
+            if "=" in line:
+                name, value = line.split("=", 1)
+                if name in ("BH_TOKEN", "BH_CONTROL_PATH", "BH_TUNNEL_PATH"):
+                    log = log.replace(value.strip().strip("'"), "[REDACTED]")
+        print("FOREIGN INSTALL FAILURE (sanitized last output):\n" + log[-3500:],
+              file=sys.stderr, flush=True)
+        raise RuntimeError("Foreign PREPARE installer exited %d; no production switch performed" %
+                           p.returncode)
+    print("Foreign PREPARE complete; old Backhaul still serving.", flush=True)
+
+
 def rotate_backhaul(old, new, iran, work):
     candidate = dual.backhaul_candidate_bundle(old, new, work)
     previous = dual.ETC / "backhaul-bundle.env"
@@ -168,7 +235,7 @@ def rotate_backhaul(old, new, iran, work):
     allow_added = block_added = new_started = bundle_changed = False
     try:
         print("Preparing Backhaul on new foreign VPS without starting reverse connection...")
-        dual.prepped_remote_install("backhaul", new, candidate)
+        prepared_backhaul_install(new, iran, candidate)
         # Ensure surviving Mieru still passes HTTPS before cutover.
         mieru_ip = dual.active_ips()["mieru"]
         if not dual.confirm_egress("mieru", mieru_ip, seconds=18):
