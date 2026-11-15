@@ -551,6 +551,17 @@ def swap_backhaul(old, new, iran, work):
 
 def recover():
     """Best-effort local recovery of interrupted cutover, without any old-host SSH."""
+    if os.geteuid() != 0:
+        raise SwapError("Recovery requires sudo dual")
+    with LOCK.open("a+") as exclusive:
+        try:
+            fcntl.flock(exclusive, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SwapError("Rotation still running; recovery refused")
+        return _recover_locked()
+
+
+def _recover_locked():
     if not JOURNAL.is_file():
         print("No pending V3 rotation", flush=True)
         return
@@ -567,7 +578,7 @@ def recover():
     if phase == "staging":
         maybe_stop_candidate(new, role)
         journal(phase="staging_failed", role=role, old=old, new=new)
-        print("Abandoned staging marked failed; inspect possible orphan stage processes", flush=True)
+        print("Abandoned staging marked failed. Inspect possible orphan staging processes/firewall; no production config was changed.", flush=True)
         return
     if phase != "cutover":
         print("No unfinished cutover; last phase: " + str(phase), flush=True)
