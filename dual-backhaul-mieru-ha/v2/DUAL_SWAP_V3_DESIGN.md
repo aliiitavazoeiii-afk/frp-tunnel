@@ -6,16 +6,28 @@
 
 ## User contract
 
-Single command on the relevant Iran host:
+Single one-time installation per Iran host, and **ALL FUTURE ROTATIONS exclusively through the existing `sudo dual` interactive menu**. No `dual-swap` command shall be required for operation.
 
-```bash
-sudo dual-swap mieru 203.0.113.10
-sudo dual-swap backhaul 203.0.113.11
+```text
+$ sudo dual
+[1] Dashboard   [2] Detailed health
+[3] Replace BACKHAUL foreign host (V3)
+[4] Replace MIERU foreign host (V3)
+[5] Last service logs
+[0] Exit
+
+dual > 3
+New public foreign IPv4: ...
+New VPS root SSH password: [hidden]
+Verify SSH host-key fingerprint with provider console: YES
+(preflight, staging, independent real transfer probes, cutover, rollback, cleanup)
 ```
+
+All configuration/management workflow must occur inside choices [3] and [4]. The helper must preserve `sudo dual status`, `sudo dual health` and [1]/[2]/[5].
 
 (Example IPs are documentation-only and will be rejected as non-global test addresses.)
 
-Interactive input: **new VPS root SSH password once**, never on argv, never persisted or logged. A newly seen SSH host key **must be independently verified against the VPS provider**; one security verification may be needed in addition to the IP and password. Optional `--dry-run` must make no network changes.
+Interactive input: **new VPS root SSH password once**, never on argv, never persisted or logged. A newly seen SSH host key **must be independently verified against the VPS provider**; one security verification may be needed in addition to the IP and password. Optional internal dry-run/test mode must make no network changes.
 
 The **previous foreign VPS must NOT be reachable or healthy** for candidate staging to proceed. Previous *role* state is preserved for rollback; the other role's health is recorded but not a hard precondition. In a no-survivor case warn about a short handover interruption; fail rather than assert zero downtime.
 
@@ -129,7 +141,7 @@ OLD REVOKED; local stale state removed
 RESULT: COMPLETED (REMOTE_CLEANUP_PENDING if old unreachable)
 ```
 
-Other commands: `sudo dual-swap status`, `sudo dual-swap --dry-run backhaul IP`, `sudo dual-swap recover --run-id ...`, `sudo dual-swap cleanup --run-id ...`. The proposed command is **not yet installed**.
+User-facing entrypoint is exclusively `sudo dual`. Recovery and cleanup shall also be reachable from that menu (e.g. additional [6] Recovery/Last Operation, with [3]/[4] still the only rotation choices). Internal CLI entrypoints may exist for automation/tests, but are not required from the operator. V3 is **not yet implemented or installed**.
 
 ## Acceptance tests (mock + live staging, without production cutover first)
 
