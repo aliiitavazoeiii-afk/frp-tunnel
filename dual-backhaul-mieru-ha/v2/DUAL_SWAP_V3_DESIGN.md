@@ -1,6 +1,6 @@
 # Dual HA V3 — Transactional Foreign VPS Rotation (DESIGN ONLY)
 
-**State:** design specification; NOT deployable code, NOT installed, no production changes.
+**State:** V3 engine, menu integration, checked installer and 12 offline unit tests have been implemented in this feature branch. **No live Maya swap has been tested or installed**; treat the code as pre-production pending canary and rollback validation.
 **Base branch:** `dual-auto-multi-iran`.
 **Targets:** Maya1 / Maya3 (maya-s3) / Maya4. Iran Xray/REALITY 443 and user identities are out of scope.
 
@@ -143,7 +143,7 @@ OLD REVOKED; local stale state removed
 RESULT: COMPLETED (REMOTE_CLEANUP_PENDING if old unreachable)
 ```
 
-User-facing entrypoint is exclusively `sudo dual`. Recovery and cleanup shall also be reachable from that menu (e.g. additional [6] Recovery/Last Operation, with [3]/[4] still the only rotation choices). Internal CLI entrypoints may exist for automation/tests, but are not required from the operator. V3 is **not yet implemented or installed**.
+User-facing entrypoint is exclusively `sudo dual`. Recovery and cleanup shall also be reachable from that menu (e.g. additional [6] Recovery/Last Operation, with [3]/[4] still the only rotation choices). Internal CLI entrypoints may exist for automation/tests, but are not required from the operator. V3 source code and installer exist on this branch; **not installed on Maya or validated in a live rotation**.
 
 ## Acceptance tests (mock + live staging, without production cutover first)
 
