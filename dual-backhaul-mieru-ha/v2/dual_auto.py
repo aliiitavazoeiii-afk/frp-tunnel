@@ -174,22 +174,30 @@ def prepared_backhaul_install(ip, iran, candidate):
     preflight = r"""set -eu
 if systemctl is-active --quiet dual-ha-backhaul-client 2>/dev/null ||
    systemctl is-active --quiet dual-ha-mita 2>/dev/null; then
-  echo 'REFUSED: An existing tunnel service is active on the new VPS.' >&2
-  exit 21
+  echo 'ACTIVE_TUNNEL_SERVICE_REFUSED' >&2; exit 21
 fi
 if [ -e /etc/dual-ha/backhaul-foreign.toml ] ||
-   [ -e /etc/dual-ha/mita.json ] ||
    [ -d /opt/dual-ha-src/frp-tunnel ]; then
-  echo 'REFUSED: A previous foreign installation is partially/completely present.' >&2
-  echo 'Inspect it before retrying; no files have been removed.' >&2
-  exit 22
-fi
-if ss -Hlnpt '( sport = :11080 )' | grep -q LISTEN; then
-  echo 'REFUSED: Foreign local SOCKS 11080 already in use.' >&2
-  exit 23
+  if [ -f /etc/dual-ha/backhaul-foreign.toml ] &&
+     [ -d /opt/dual-ha-src/frp-tunnel ] &&
+     [ -x /opt/dual-ha/bin/backhaul ] &&
+     systemctl is-active --quiet danted &&
+     systemctl cat dual-ha-backhaul-client.service 2>/dev/null |
+       grep -Fq 'ExecStart=/opt/dual-ha/bin/backhaul -c /etc/dual-ha/backhaul-foreign.toml'; then
+    echo 'REUSE_FAILED_V3_CANDIDATE'
+  else
+    echo 'UNKNOWN_PARTIAL_INSTALL' >&2; exit 22
+  fi
+else
+  if ss -Hlnpt '( sport = :11080 )' | grep -q LISTEN; then
+    echo 'FOREIGN_SOCKS_PORT_BUSY' >&2; exit 23
+  fi
+  echo 'FRESH'
 fi
 """
-    dual.ssh(ip, preflight, timeout=20)
+    state = dual.ssh(ip, preflight, timeout=20).strip()
+    if state not in ("FRESH", "REUSE_FAILED_V3_CANDIDATE"):
+        raise RuntimeError("Unrecognized foreign installer preflight state")
     # The old helper used "test ! -e /root/dual-ha-backhaul-bundle.env".
     # This rejected hosts with harmless leftover bundle files and hid the reason.
     suffix = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -201,6 +209,73 @@ fi
                       "; sha256sum " + shlex.quote(stage) + " | cut -d' ' -f1", timeout=15).strip()
     if actual != expected:
         raise RuntimeError("Candidate bundle transfer hash mismatch; no switch performed")
+    if state == "REUSE_FAILED_V3_CANDIDATE":
+        # This node belongs to a previous failed V3 attempt. Never wipe or
+        # reinstall an unknown VPS: require an *old local V3 secret bundle*
+        # that matches the current inactive foreign config and host identity.
+        py = r'''
+import os, pathlib, re, sys, tempfile
+candidate_path, new, iran = sys.argv[1:]
+config = pathlib.Path('/etc/dual-ha/backhaul-foreign.toml')
+def values(path):
+    out = {}
+    for line in path.read_text().splitlines():
+        match = re.fullmatch(r"([A-Z_]+)='([^']*)'", line)
+        if match: out[match.group(1)] = match.group(2)
+    return out
+candidate = values(pathlib.Path(candidate_path))
+if candidate.get('BH_IRAN_IP') != iran or candidate.get('BH_FOREIGN_IP') != new:
+    raise SystemExit('CANDIDATE_HOST_MISMATCH')
+original = config.read_text()
+def field(name):
+    matches = re.findall(r'(?m)^'+re.escape(name)+r' = "([^"]+)"$', original)
+    if len(matches) != 1: raise SystemExit('UNKNOWN_FOREIGN_CONFIG_'+name)
+    return matches[0]
+domain = candidate.get('BH_DOMAIN','')
+if not domain or field('tls_server_name') != domain or field('remote_addr') not in (domain+':18443', domain+':18444'):
+    raise SystemExit('CANDIDATE_DOMAIN_MISMATCH')
+verified = False
+for path in pathlib.Path('/root').glob('.dual-ha-backhaul-candidate-*.env'):
+    if str(path) == candidate_path: continue
+    try:
+        previous = values(path)
+        if (previous.get('BH_IRAN_IP') == iran and
+            previous.get('BH_FOREIGN_IP') == new and
+            previous.get('BH_DOMAIN') == domain and
+            previous.get('BH_TOKEN') == field('token') and
+            previous.get('BH_CONTROL_PATH') == field('ws_control_path') and
+            previous.get('BH_TUNNEL_PATH') == field('ws_tunnel_path')):
+            verified = True
+            break
+    except (OSError, ValueError): pass
+if not verified: raise SystemExit('PREVIOUS_V3_OWNER_PROOF_FAILED')
+if not re.fullmatch('[a-f0-9]{64}',candidate.get('BH_TOKEN','')):
+    raise SystemExit('INVALID_NEW_TOKEN')
+for source, fieldname in [('BH_TOKEN','token'),('BH_CONTROL_PATH','ws_control_path'),('BH_TUNNEL_PATH','ws_tunnel_path')]:
+    value = candidate.get(source,'')
+    if not value or not re.fullmatch(r'/[a-z0-9/]+|[a-f0-9]{64}',value):
+        raise SystemExit('INVALID_NEW_PATH_OR_TOKEN')
+    original = re.sub(r'(?m)^'+re.escape(fieldname)+r' = "[^"]+"$',
+                      lambda m, v=value, k=fieldname: k+' = "'+v+'"', original)
+fd, temporary = tempfile.mkstemp(prefix='.dual-v3-',dir=str(config.parent))
+try:
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,'w') as stream:
+        stream.write(original)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary,config)
+finally:
+    if os.path.exists(temporary): os.unlink(temporary)
+print('VERIFIED_PREVIOUS_V3_CANDIDATE_REUSED')
+'''
+        result = dual.ssh(ip, "python3 -c " + shlex.quote(py) + " " +
+                          " ".join(shlex.quote(v) for v in (stage, ip, iran)),
+                          timeout=25).strip()
+        if result != "VERIFIED_PREVIOUS_V3_CANDIDATE_REUSED":
+            raise RuntimeError("Could not safely reuse previous V3 candidate")
+        print("Verified inactive foreign V3 candidate reused; no reinstall needed.", flush=True)
+        return
     args = ("bash -s -- --role backhaul --iran-ip %s --foreign-ip %s"
             " --bundle %s --prepare" %
             (shlex.quote(iran), shlex.quote(ip), shlex.quote(stage)))
