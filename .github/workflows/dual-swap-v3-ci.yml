@@ -1,0 +1,27 @@
+name: Dual Swap V3 offline checks
+on:
+  push:
+    branches:
+      - feat/dual-transactional-rotation-v3-design
+  pull_request:
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/dual_swap_v3.py'
+      - 'dual-backhaul-mieru-ha/v2/test_dual_swap_v3.py'
+      - 'dual-backhaul-mieru-ha/v2/install-dual-v3.sh'
+      - 'dual-backhaul-mieru-ha/v2/dual.py'
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and isolated smoke tests
+        run: |
+          set -euo pipefail
+          cd dual-backhaul-mieru-ha/v2
+          python3 -m py_compile dual_swap_v3.py dual_auto.py dual.py test_dual_swap_v3.py
+          python3 test_dual_swap_v3.py -v
+          bash -n install-dual-v3.sh
+          grep -q 'from dual_swap_v3 import rotate as v3_rotate' dual.py
+          grep -q 'Recover interrupted V3 operation' dual.py
+          ! grep -q 'Old host must be SSH accessible' dual_swap_v3.py
+          echo OFFLINE_V3_CHECKS_PASSED
