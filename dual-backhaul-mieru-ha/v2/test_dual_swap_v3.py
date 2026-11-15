@@ -49,4 +49,76 @@ class V3Tests(unittest.TestCase):
   self.assertEqual(v3.STAGE['mieru'],21102)
   self.assertEqual(v3.LIVE['mieru'],21002)
 
+
+class V3TransactionTests(unittest.TestCase):
+ def test_mieru_canary_fail_preserves_live_config(self):
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   with patch.object(v3,'saved',return_value=b'OLD'),\
+        patch.object(v3,'get_weight',return_value=1),\
+        patch.object(v3,'stage_mieru',return_value=None),\
+        patch.object(v3,'probe',return_value=False),\
+        patch.object(v3,'journal'),\
+        patch.object(v3,'maybe_stop_candidate'),\
+        patch.object(v3,'stop_process'),\
+        patch.object(sys.modules['dual'],'atomic_write',create=True) as write:
+    with self.assertRaises(v3.SwapError):
+     v3.swap_mieru('185.190.52.164','82.152.132.220',pathlib.Path(d))
+    write.assert_not_called()
+
+ def test_mieru_live_failure_restores_old_bytes(self):
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   work=pathlib.Path(d)
+   (work/'mieru.production.json').write_text('{"test":"candidate"}')
+   with patch.object(v3,'saved',return_value=b'OLD'),\
+        patch.object(v3,'get_weight',return_value=1),\
+        patch.object(v3,'stage_mieru',return_value=None),\
+        patch.object(v3,'probe',side_effect=[True,False]),\
+        patch.object(v3,'journal'),\
+        patch.object(v3,'cmd'),\
+        patch.object(v3,'maybe_stop_candidate'),\
+        patch.object(v3,'stop_process'),\
+        patch.object(v3,'JOURNAL',work/'not-created.json'),\
+        patch.object(sys.modules['dual'],'atomic_write',create=True) as write,\
+        patch.object(sys.modules['dual'],'active_ips',return_value={'mieru':'185.190.52.164'},create=True):
+    with self.assertRaises(v3.SwapError):
+     v3.swap_mieru('185.190.52.164','82.152.132.220',work)
+    self.assertEqual(write.call_count,2)
+    self.assertEqual(write.call_args.args[1],b'OLD')
+
+ def test_backhaul_bad_canary_does_not_write_live_config(self):
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   with patch.object(v3,'saved',return_value=b'OLD'),\
+        patch.object(v3,'get_weight',return_value=1),\
+        patch.object(v3,'guard_exists',return_value=False),\
+        patch.object(v3,'stage_backhaul',return_value={}),\
+        patch.object(v3,'stage_firewall',return_value=['new']),\
+        patch.object(v3,'_start_stage',return_value=[]),\
+        patch.object(v3,'probe',return_value=False),\
+        patch.object(v3,'journal'),\
+        patch.object(v3,'undo_stage_firewall'),\
+        patch.object(v3,'maybe_stop_candidate'),\
+        patch.object(v3,'stop_process'),\
+        patch.object(sys.modules['dual'],'ssh',return_value='',create=True),\
+        patch.object(sys.modules['dual'],'atomic_write',create=True) as write:
+    with self.assertRaises(v3.SwapError):
+     v3.swap_backhaul('152.237.230.159','82.152.132.220','94.184.4.38',pathlib.Path(d))
+    write.assert_not_called()
+
+ def test_guard_uses_source_restricted_tcp_rules(self):
+  with patch.object(v3,'guard_exists',return_value=False),patch.object(v3,'ipt') as ipt:
+   v3.begin_production_guard('82.152.132.220','94.184.4.38')
+   commands=[c.args for c in ipt.call_args_list]
+   self.assertTrue(any('REJECT' in call and 'tcp' in call for call in commands))
+   self.assertTrue(any(call[:3]==('-I','INPUT','1') for call in commands))
+
+ def test_wait_gateway_requires_nonzero_weight(self):
+  with patch.object(sys.modules['dual'],'haproxy_metrics',return_value={'mieru':{'state':'UP'}},create=True),\
+       patch.object(v3,'get_weight',return_value=0),\
+       patch.object(v3.time,'monotonic',side_effect=[0,3]),\
+       patch.object(v3.time,'sleep'):
+   self.assertFalse(v3.wait_gateway('mieru',timeout=1))
+
 if __name__=='__main__':unittest.main()
