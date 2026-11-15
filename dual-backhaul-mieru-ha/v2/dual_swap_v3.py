@@ -183,6 +183,7 @@ def stage_mieru(new, work):
                                 start_new_session=True)
     finally:
         log.close()
+    dual.atomic_write(work / "mieru.stage.pid", (str(proc.pid)+"\n").encode())
     for _ in range(20):
         if proc.poll() is not None:
             raise SwapError("Candidate Mieru process terminated")
@@ -411,6 +412,7 @@ def _start_stage(iran, work):
             finally:
                 log.close()
             procs.append(p)
+            dual.atomic_write(work / f"backhaul.stage.{idx}.pid", (str(p.pid)+"\n").encode())
             time.sleep(1)
             if p.poll() is not None:
                 raise SwapError("Backhaul candidate stage component stopped")
@@ -489,6 +491,8 @@ def swap_backhaul(old, new, iran, work):
     try:
         vals = stage_backhaul(new, iran, original, work)
         stage_rule = stage_firewall(new, iran)
+        journal(phase="staging", role="backhaul", old=old, new=new,
+                work=str(work), stage_firewall_created=True)
         procs = _start_stage(iran, work)
         dual.ssh(new, "systemctl start dual-ha-backhaul-client", timeout=25)
         started_foreign = True
@@ -549,6 +553,19 @@ def swap_backhaul(old, new, iran, work):
         undo_stage_firewall(stage_rule)
 
 
+def reap_owned_stage(work):
+    """Terminate only documented V3 stage processes with /proc ownership proof."""
+    for path in work.glob("*.stage.*pid"):
+        try:
+            pid = int(path.read_text().strip())
+            command = Path(f"/proc/{pid}/cmdline").read_bytes()
+            if str(work).encode() not in command:
+                continue
+            os.killpg(pid, signal.SIGTERM)
+        except (OSError, ValueError, ProcessLookupError):
+            pass
+
+
 def recover():
     """Best-effort local recovery of interrupted cutover, without any old-host SSH."""
     if os.geteuid() != 0:
@@ -576,9 +593,15 @@ def _recover_locked():
             return
         raise SwapError("Committed role is not healthy; manual review required before recovery")
     if phase == "staging":
+        work = Path(j.get("work", ""))
+        if work.is_dir() and work.is_relative_to(ROOT):
+            reap_owned_stage(work)
+        if role == "backhaul" and j.get("stage_firewall_created") is True:
+            undo_stage_firewall(["-s",new,"-d",iran,"-p","tcp", "--dport",
+                                 str(STAGE_BACKHAUL_TCP),"-j","ACCEPT"])
         maybe_stop_candidate(new, role)
         journal(phase="staging_failed", role=role, old=old, new=new)
-        print("Abandoned staging marked failed. Inspect possible orphan staging processes/firewall; no production config was changed.", flush=True)
+        print("Staging cleaned; production configs were not changed. Old path may still be unhealthy.", flush=True)
         return
     if phase != "cutover":
         print("No unfinished cutover; last phase: " + str(phase), flush=True)
