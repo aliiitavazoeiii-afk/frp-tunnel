@@ -137,12 +137,50 @@ def probe(port, target_ip, *, label):
     return wins >= 2
 
 
+def ha_command(command):
+    """Read/adjust only this role's HAProxy runtime weight through its admin socket."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(4)
+        sock.connect(str(dual.RUN / "haproxy.sock"))
+        sock.sendall((command + "\n").encode())
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            data = sock.recv(8192)
+            if not data: break
+            chunks.append(data)
+            if sum(map(len,chunks)) > 65536:
+                raise SwapError("HAProxy admin reply exceeded limit")
+    result = b"".join(chunks).decode(errors="replace")
+    if "error" in result.lower() or "unknown" in result.lower():
+        raise SwapError("HAProxy rejected runtime command")
+    return result
+
+
+def get_weight(role):
+    if role not in LIVE:
+        raise SwapError("Unknown HAProxy role")
+    value = ha_command(f"get weight dual_egress/{role}")
+    m = re.match(r"\s*(\d+)", value)
+    if not m:
+        raise SwapError("Unexpected HAProxy weight")
+    return int(m.group(1))
+
+
+def set_weight(role, weight):
+    if role not in LIVE or type(weight) is not int or not 0 <= weight <= 256:
+        raise SwapError("Invalid bounded HAProxy weight")
+    ha_command(f"set weight dual_egress/{role} {weight}")
+    if get_weight(role) != weight:
+        raise SwapError("HAProxy weight change not confirmed")
+
+
 def wait_gateway(role, timeout=65):
-    """Avoid declaring success when HAProxy has administratively MAINT'ed the path."""
+    """Avoid success while the backend is MAINT or administratively weight 0."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         data = dual.haproxy_metrics().get(role, {})
-        if data.get("state") == "UP":
+        if data.get("state") == "UP" and get_weight(role) > 0:
             return True
         time.sleep(3)
     return False
@@ -441,18 +479,21 @@ def finalize_old_host(old, new, role):
 def swap_mieru(old, new, work):
     config = Path("/etc/dual-ha/mieru.json")
     old_bytes = saved(config, work)
+    old_weight = get_weight("mieru")
     proc = None
     switched = False
     try:
         proc = stage_mieru(new, work)
         if not probe(STAGE["mieru"], new, label="NEW MIERU CANARY"):
             raise SwapError("New Mieru failed 1-MiB transfer gate; old config unchanged")
-        journal(phase="cutover", role="mieru", old=old, new=new, work=str(work))
+        journal(phase="cutover", role="mieru", old=old, new=new, work=str(work), prior_weight=old_weight)
         dual.atomic_write(config, (work / "mieru.production.json").read_bytes())
         switched = True
         cmd(["systemctl", "restart", "dual-ha-mieru"], timeout=30)
         if not probe(LIVE["mieru"], new, label="LIVE MIERU"):
             raise SwapError("New live Mieru failed transfer gate")
+        if get_weight("mieru") == 0:
+            set_weight("mieru", 1)
         if not wait_gateway("mieru"):
             raise SwapError("Mieru live SOCKS passed but HAProxy did not enable the path")
         print("  LIVE MIERU + HAProxy verified; existing connections may have reconnected", flush=True)
@@ -465,6 +506,8 @@ def swap_mieru(old, new, work):
         if switched and (not JOURNAL.is_file() or json.loads(JOURNAL.read_text()).get("phase") != "committed"):
             print("  ROLLBACK: restoring previous Mieru config", flush=True)
             dual.atomic_write(config, old_bytes)
+            with contextlib.suppress(Exception):
+                set_weight("mieru", old_weight)
             cmd(["systemctl", "restart", "dual-ha-mieru"], timeout=30)
             restored = dual.active_ips()["mieru"] == old
             journal(phase="rolled_back", role="mieru", old=old, new=new, config_restored=restored)
@@ -482,6 +525,7 @@ def swap_backhaul(old, new, iran, work):
     cfg = Path("/etc/dual-ha/backhaul-iran.toml")
     router = Path("/etc/dual-ha/backhaul-router.cfg")
     original = {str(p): saved(p, work) for p in (bundle, cfg, router)}
+    old_weight = get_weight("backhaul")
     stage_rule = None
     procs = []
     started_foreign = False
@@ -506,7 +550,7 @@ def swap_backhaul(old, new, iran, work):
         undo_stage_firewall(stage_rule)
         stage_rule = None
         set_foreign_port(new, 18443)
-        journal(phase="cutover", role="backhaul", old=old, new=new, work=str(work))
+        journal(phase="cutover", role="backhaul", old=old, new=new, work=str(work), prior_weight=old_weight)
         guard_added = True  # mark before mutation for failure-injection rollback
         begin_production_guard(new, iran)
         newbundle = work / "backhaul.foreign-bundle.env"
@@ -519,6 +563,8 @@ def swap_backhaul(old, new, iran, work):
         dual.ssh(new, "systemctl enable --now dual-ha-backhaul-client", timeout=35)
         if not probe(LIVE["backhaul"], new, label="LIVE BACKHAUL"):
             raise SwapError("New production Backhaul data-plane verification failed")
+        if get_weight("backhaul") == 0:
+            set_weight("backhaul", 1)
         if not wait_gateway("backhaul"):
             raise SwapError("Backhaul live SOCKS passed but HAProxy did not enable the path")
         install_persistent_guard(iran)
@@ -538,6 +584,8 @@ def swap_backhaul(old, new, iran, work):
             for name, old_bytes in original.items():
                 dual.atomic_write(Path(name), old_bytes)
             remove_production_guard(iran, had_guard=had_guard)
+            with contextlib.suppress(Exception):
+                set_weight("backhaul", old_weight)
             with contextlib.suppress(Exception):
                 cmd(["systemctl", "restart", "dual-ha-backhaul"], timeout=25)
                 cmd(["systemctl", "restart", "dual-ha-backhaul-router"], timeout=25)
@@ -614,6 +662,8 @@ def _recover_locked():
             raise SwapError("Missing Mieru rollback snapshot; manual intervention needed")
         dual.atomic_write(Path("/etc/dual-ha/mieru.json"), src.read_bytes())
         cmd(["systemctl", "restart", "dual-ha-mieru"])
+        if type(j.get("prior_weight")) is int and 0 <= j["prior_weight"] <= 256:
+            set_weight("mieru", j["prior_weight"])
     elif role == "backhaul":
         for p in ("backhaul-bundle.env", "backhaul-iran.toml", "backhaul-router.cfg"):
             src = work / (p + ".prior")
@@ -621,6 +671,8 @@ def _recover_locked():
                 raise SwapError("Missing Backhaul rollback snapshot; manual intervention needed")
             dual.atomic_write(Path("/etc/dual-ha") / p, src.read_bytes())
         remove_production_guard(iran, had_guard=GUARD_SCRIPT.is_file())
+        if type(j.get("prior_weight")) is int and 0 <= j["prior_weight"] <= 256:
+            set_weight("backhaul", j["prior_weight"])
         cmd(["systemctl", "restart", "dual-ha-backhaul"])
         cmd(["systemctl", "restart", "dual-ha-backhaul-router"])
     else:
