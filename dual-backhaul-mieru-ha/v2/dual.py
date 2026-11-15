@@ -538,19 +538,9 @@ def replace_backhaul(old_ip: str, new_ip: str, w: Path) -> None:
 
 
 def rotate(role: str, new_ip: str) -> None:
-    new_ip = ensure_ip(new_ip)
-    old = safety_checks(role, new_ip)
-    if not checked_confirm(role, old, new_ip):
-        print("  Cancelled. No production configuration touched.")
-        return
-    w = workdir()
-    print("  Rotation backup directory:", w)
-    if role == "backhaul":
-        replace_backhaul(old, new_ip, w)
-    else:
-        replace_mieru(old, new_ip, w)
-    print(color("  Rotation completed. Run sudo dual health and monitor for 24-72h.", "1;32"))
-    print("  Old foreign host is NOT deleted. No 3x-ui setting or REALITY identity was edited.")
+    """V3 transactional staging; no old-VPS SSH or survivor-health dependency."""
+    from dual_swap_v3 import rotate as v3_rotate
+    v3_rotate(role, new_ip)
 
 
 def logs() -> None:
@@ -571,9 +561,10 @@ def menu() -> None:
     while True:
         print_status()
         print(color("\n  [1] Dashboard      [2] Detailed health / censorship diagnosis", "1;36"))
-        print("  [3] Replace BACKHAUL foreign host")
-        print("  [4] Replace MIERU foreign host")
+        print("  [3] Replace BACKHAUL foreign host (V3)")
+        print("  [4] Replace MIERU foreign host (V3)")
         print("  [5] Last service logs")
+        print("  [6] Recover interrupted V3 operation")
         print("  [0] Exit")
         try:
             selection = input("\n  dual > ").strip()
@@ -589,8 +580,11 @@ def menu() -> None:
                 rotate(role, new_ip)
             elif selection == "5":
                 logs()
+            elif selection == "6":
+                from dual_swap_v3 import recover
+                recover()
             else:
-                print("  Choose 0-5")
+                print("  Choose 0-6")
         except (EOFError, KeyboardInterrupt):
             print("\n  Exiting.")
             break
