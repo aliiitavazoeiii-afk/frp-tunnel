@@ -639,6 +639,7 @@ def _recover_locked():
         return
     j = json.loads(JOURNAL.read_text())
     phase, role, old, new = j.get("phase"), j.get("role"), j.get("old"), j.get("new")
+    iran = live_identity()
     if phase == "committed":
         print("New role already committed; checking production, do not roll back automatically.", flush=True)
         if probe(LIVE[role], new, label="RECOVER LIVE") and wait_gateway(role):
