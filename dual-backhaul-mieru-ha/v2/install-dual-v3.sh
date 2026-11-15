@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo 'Use sudo'; exit 2; }
 umask 077
-REF='4386a1c2cb06001711dc446544d3a9bbc249b32e'
+REF='6fd97d3d794c476021865f3399b14a4e0687dc00'
 BASE="https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/$REF/dual-backhaul-mieru-ha/v2"
 D='/opt/dual-ha/helper'
 [[ "$(readlink -f /usr/local/bin/dual)" == "$D/dual.py" ]] || { echo 'Unknown dual entrypoint'; exit 3; }
@@ -40,7 +40,13 @@ for f in dual_swap_v3.py dual_auto.py test_dual_swap_v3.py dual_menu_patch_v3.py
   curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 12 --max-time 90 "$BASE/$f" -o "$T/$f"
   [[ -s "$T/$f" ]] || exit 4
 done
-python3 "$T/dual_menu_patch_v3.py" "$D/dual.py" "$T/dual.py"
+if grep -Fq 'from dual_swap_v3 import rotate as v3_rotate' "$D/dual.py" && \
+   grep -Fq 'Recover interrupted V3 operation' "$D/dual.py"; then
+  # Existing V3 menu: update only the helper modules; do not reapply AST patch.
+  cp -a "$D/dual.py" "$T/dual.py"
+else
+  python3 "$T/dual_menu_patch_v3.py" "$D/dual.py" "$T/dual.py"
+fi
 python3 -m py_compile "$T/dual.py" "$T/dual_auto.py" "$T/dual_swap_v3.py" "$T/dual_menu_patch_v3.py"
 python3 "$T/test_dual_swap_v3.py" -q
 mkdir -p -m 0700 "$B"
