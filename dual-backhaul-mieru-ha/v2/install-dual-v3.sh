@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo 'Use sudo'; exit 2; }
 umask 077
-REF='18091e5ba47ab9b2d61ab7ffe6d1caf4456daa1e'
+REF='8fd7a18b71ee5c206c6ee75f9315d6a25a24c28c'
 BASE="https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/$REF/dual-backhaul-mieru-ha/v2"
 D='/opt/dual-ha/helper'
 [[ "$(readlink -f /usr/local/bin/dual)" == "$D/dual.py" ]] || { echo 'Unknown dual entrypoint'; exit 3; }
@@ -41,28 +41,60 @@ for f in dual_swap_v3.py dual_auto.py test_dual_swap_v3.py; do
   [[ -s "$T/$f" ]] || exit 4
 done
 python3 - "$D/dual.py" "$T/dual.py" <<'PY'
-from pathlib import Path
+import ast
+import re
 import sys
-s=Path(sys.argv[1]).read_text()
-a=s.find('def rotate(role: str, new_ip: str) -> None:\n')
-b=s.find('\n\ndef logs() -> None:',a)
-if a<0 or b<0 or 'from dual_swap_v3 import' in s:
-    raise SystemExit('Unsupported/already upgraded dual.py: refusing install')
-s=s[:a]+'''def rotate(role: str, new_ip: str) -> None:
-    """Transactional V3 engine used by standard sudo dual menu."""
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text()
+tree = ast.parse(source)
+defs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+rotate, menu = defs.get("rotate"), defs.get("menu")
+if not rotate or not menu or "from dual_swap_v3 import" in source:
+    raise SystemExit("Unsupported/already upgraded dual.py: refusing install")
+if [arg.arg for arg in rotate.args.args][:2] != ["role", "new_ip"]:
+    raise SystemExit("Unexpected rotate() signature: refusing install")
+if not any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+           and n.func.id == "rotate" for n in ast.walk(menu)):
+    raise SystemExit("Existing menu does not invoke rotate(): refusing install")
+lines = source.splitlines(keepends=True)
+menu_source = "".join(lines[menu.lineno-1:menu.end_lineno])
+if not all(re.search(r"""['"]""" + str(c) + r"""['"]""", menu_source) for c in (3, 4)):
+    raise SystemExit("Options 3/4 not found in existing menu: refusing install")
+# Retain all host-specific menu labels and any other menu items.
+branch = re.compile(r"""(?m)^(?P<i>[ \t]*)elif[ \t]+selection[ \t]*==[ \t]*['"]5['"]:[ \t]*\n(?P<b>[ \t]*)logs\(\)[ \t]*$""")
+m = branch.search(menu_source)
+if not m:
+    raise SystemExit("Recovery branch anchor not recognized; no files changed")
+addition = (m.group(0) + "\n" + m.group("i") + 'elif selection == "6":\n'
+            + m.group("b") + "from dual_swap_v3 import recover\n"
+            + m.group("b") + "recover()")
+menu_source = menu_source[:m.start()] + addition + menu_source[m.end():]
+exitline = re.compile(r"""(?m)^(?P<i>[ \t]*)print\(['"][^\n]*\[0\][^\n]*Exit[^\n]*\)""")
+m = exitline.search(menu_source)
+if not m:
+    raise SystemExit("Menu exit line not recognized; no files changed")
+menu_source = (menu_source[:m.start()] + m.group("i")
+               + 'print("  [6] Recover interrupted V3 operation")\n'
+               + menu_source[m.start():])
+lines[menu.lineno-1:menu.end_lineno] = [menu_source]
+source = "".join(lines)
+tree = ast.parse(source)
+rotate = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "rotate")
+lines = source.splitlines(keepends=True)
+replacement = '''def rotate(role: str, new_ip: str) -> None:
+    """Transactional V3 engine behind standard sudo dual choices 3 and 4."""
     from dual_swap_v3 import rotate as v3_rotate
     v3_rotate(role, new_ip)
-'''+s[b:]
-pairs=[
-('print("  [3] Replace BACKHAUL foreign host")','print("  [3] Replace BACKHAUL foreign host (V3)")'),
-('print("  [4] Replace MIERU foreign host")','print("  [4] Replace MIERU foreign host (V3)")'),
-('print("  [5] Last service logs")','print("  [5] Last service logs")\n        print("  [6] Recover interrupted V3 operation")'),
-('            elif selection == "5":\n                logs()\n            else:\n                print("  Choose 0-5")',
- '            elif selection == "5":\n                logs()\n            elif selection == "6":\n                from dual_swap_v3 import recover\n                recover()\n            else:\n                print("  Choose 0-6")')]
-for before,after in pairs:
-    if s.count(before)!=1:raise SystemExit('Unsupported menu layout: refusing install')
-    s=s.replace(before,after)
-Path(sys.argv[2]).write_text(s)
+'''
+lines[rotate.lineno-1:rotate.end_lineno] = [replacement]
+output = "".join(lines)
+ast.parse(output)
+if output.count("from dual_swap_v3 import rotate as v3_rotate") != 1:
+    raise SystemExit("V3 patch verification failed")
+if output.count("from dual_swap_v3 import recover") != 1:
+    raise SystemExit("V3 recovery verification failed")
+Path(sys.argv[2]).write_text(output)
 PY
 python3 -m py_compile "$T/dual.py" "$T/dual_auto.py" "$T/dual_swap_v3.py"
 python3 "$T/test_dual_swap_v3.py" -q
