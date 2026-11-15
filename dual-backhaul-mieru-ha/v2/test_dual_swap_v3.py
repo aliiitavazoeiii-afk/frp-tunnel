@@ -13,6 +13,10 @@ spec=importlib.util.spec_from_file_location('dual_swap_v3',p)
 v3=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(v3)
 
+auto_spec=importlib.util.spec_from_file_location('dual_auto_actual',p.with_name('dual_auto.py'))
+real_auto=importlib.util.module_from_spec(auto_spec)
+auto_spec.loader.exec_module(real_auto)
+
 class V3Tests(unittest.TestCase):
  def test_rejects_reserved_and_loopback_ips(self):
   for ip in ('203.0.113.10','127.0.0.1','192.168.0.1','bad','0.0.0.0'):
@@ -58,6 +62,7 @@ class V3TransactionTests(unittest.TestCase):
         patch.object(v3,'get_weight',return_value=1),\
         patch.object(v3,'stage_mieru',return_value=None),\
         patch.object(v3,'probe',return_value=False),\
+        patch.object(v3,'wait_backhaul_candidate',return_value=True),\
         patch.object(v3,'journal'),\
         patch.object(v3,'maybe_stop_candidate'),\
         patch.object(v3,'stop_process'),\
@@ -160,8 +165,7 @@ class V3Maya4RegressionTests(unittest.TestCase):
                      side_effect=['REUSE_FAILED_V3_CANDIDATE',expected,'VERIFIED_PREVIOUS_V3_CANDIDATE_REUSED'],
                      create=True) as ssh, \
         patch.object(sys.modules['dual'],'scp',create=True) as scp:
-    import dual_auto
-    dual_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',bundle)
+    real_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',bundle)
     self.assertEqual(ssh.call_count,3)
     self.assertTrue(all(call.args[0]=='82.152.141.33' for call in ssh.call_args_list))
     scp.assert_called_once()
@@ -169,9 +173,8 @@ class V3Maya4RegressionTests(unittest.TestCase):
  def test_unknown_foreign_install_is_never_reused(self):
   with patch.object(sys.modules['dual'],'ssh',side_effect=RuntimeError('UNKNOWN_PARTIAL_INSTALL'),
                     create=True), patch.object(sys.modules['dual'],'scp',create=True) as scp:
-   import dual_auto
    with self.assertRaises(RuntimeError):
-    dual_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',
+    real_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',
                                        pathlib.Path('/nonexistent'))
    scp.assert_not_called()
 
