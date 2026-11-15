@@ -149,4 +149,31 @@ class V3Maya4RegressionTests(unittest.TestCase):
    self.assertFalse(v3.wait_backhaul_candidate(21101,'82.152.141.33',attempts=2))
 
 
+ def test_verified_previous_new_host_install_is_retryable(self):
+  import hashlib
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as directory:
+   bundle=pathlib.Path(directory)/'candidate.env'
+   bundle.write_text("BH_TOKEN='not-a-real-secret'\n")
+   expected=hashlib.sha256(bundle.read_bytes()).hexdigest()
+   with patch.object(sys.modules['dual'],'ssh',
+                     side_effect=['REUSE_FAILED_V3_CANDIDATE',expected,'VERIFIED_PREVIOUS_V3_CANDIDATE_REUSED'],
+                     create=True) as ssh, \
+        patch.object(sys.modules['dual'],'scp',create=True) as scp:
+    import dual_auto
+    dual_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',bundle)
+    self.assertEqual(ssh.call_count,3)
+    self.assertTrue(all(call.args[0]=='82.152.141.33' for call in ssh.call_args_list))
+    scp.assert_called_once()
+
+ def test_unknown_foreign_install_is_never_reused(self):
+  with patch.object(sys.modules['dual'],'ssh',side_effect=RuntimeError('UNKNOWN_PARTIAL_INSTALL'),
+                    create=True), patch.object(sys.modules['dual'],'scp',create=True) as scp:
+   import dual_auto
+   with self.assertRaises(RuntimeError):
+    dual_auto.prepared_backhaul_install('82.152.141.33','5.10.249.206',
+                                       pathlib.Path('/nonexistent'))
+   scp.assert_not_called()
+
+
 if __name__=='__main__':unittest.main()
