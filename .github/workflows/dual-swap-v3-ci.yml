@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/dual-transactional-rotation-v3-design
+      - fix/v3-backhaul-stage-no-old-ssh
   pull_request:
     paths:
       - 'dual-backhaul-mieru-ha/v2/dual_swap_v3.py'
