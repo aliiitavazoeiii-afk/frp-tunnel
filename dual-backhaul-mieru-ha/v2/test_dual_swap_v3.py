@@ -121,4 +121,49 @@ class V3TransactionTests(unittest.TestCase):
        patch.object(v3.time,'sleep'):
    self.assertFalse(v3.wait_gateway('mieru',timeout=1))
 
+
+class V3Maya4RegressionTests(unittest.TestCase):
+ def test_old_vps_ssh_is_unconditionally_forbidden(self):
+  import inspect
+  source=inspect.getsource(v3)
+  self.assertNotIn('dual.ssh(old,',source)
+  self.assertFalse(hasattr(v3,'cleanup_old_remote'))
+  with patch.object(sys.modules['dual'],'ssh',side_effect=AssertionError('OLD SSH'),create=True):
+   self.assertEqual(v3.finalize_old_host('185.190.52.166','82.152.141.33','backhaul'),
+                    'old_vps_not_contacted')
+
+ def test_delayed_reverse_canary_retries_before_cutover(self):
+  import subprocess
+  fail=subprocess.CompletedProcess([],7,'','curl: (7) Could not connect')
+  good=subprocess.CompletedProcess([],0,'ip=82.152.141.33\n','')
+  with patch.object(v3,'cmd',side_effect=[fail,fail,good]) as command, \
+       patch.object(v3.time,'sleep') as sleep:
+   self.assertTrue(v3.wait_backhaul_candidate(21101,'82.152.141.33',attempts=4))
+   self.assertEqual(command.call_count,3)
+   self.assertEqual(sleep.call_count,2)
+
+ def test_unreachable_reverse_canary_fails_closed(self):
+  import subprocess
+  fail=subprocess.CompletedProcess([],28,'','operation timed out')
+  with patch.object(v3,'cmd',return_value=fail),patch.object(v3.time,'sleep'):
+   self.assertFalse(v3.wait_backhaul_candidate(21101,'82.152.141.33',attempts=2))
+
+ def test_partial_foreign_install_is_rejected_without_scp(self):
+  with patch.object(sys.modules['dual'],'ssh',return_value='UNKNOWN_PARTIAL_INSTALL',create=True),\
+       patch.object(sys.modules['dual'],'scp',create=True) as copy:
+   with self.assertRaises(v3.SwapError):
+    v3.prepare_backhaul_candidate('82.152.141.33','5.10.249.206',pathlib.Path('/nonexistent'))
+   copy.assert_not_called()
+
+ def test_verified_failed_stage_is_reused_only_on_new_host(self):
+  with patch.object(sys.modules['dual'],'ssh',side_effect=['REUSABLE_FAILED_STAGE','PRIOR_V3_CANDIDATE_REUSED'],create=True) as ssh,\
+       patch.object(sys.modules['dual'],'scp',create=True) as copy,\
+       patch.object(sys.modules['dual_auto'],'prepared_backhaul_install',create=True) as fresh:
+   v3.prepare_backhaul_candidate('82.152.141.33','5.10.249.206',pathlib.Path('/staged-bundle'))
+   self.assertEqual(ssh.call_count,2)
+   self.assertTrue(all(c.args[0]=='82.152.141.33' for c in ssh.call_args_list))
+   copy.assert_called_once()
+   fresh.assert_not_called()
+
+
 if __name__=='__main__':unittest.main()
