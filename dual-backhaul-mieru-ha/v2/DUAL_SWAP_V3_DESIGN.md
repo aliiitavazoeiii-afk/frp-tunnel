@@ -128,7 +128,9 @@ The current foreign client dials **Iran public :18443** and maps Iran SOCKS `127
 ## Suggested interface
 
 ```text
-$ sudo dual-swap mieru 203.0.113.10
+$ sudo dual
+  dual > 4
+  New foreign IPv4: 203.0.113.10
 Iran host: Maya1     Current Mieru: OLD_IP
 New VPS SSH password: [hidden]
 SSH host key: SHA256:...  Verify in provider console; type YES:
