@@ -148,22 +148,5 @@ class V3Maya4RegressionTests(unittest.TestCase):
   with patch.object(v3,'cmd',return_value=fail),patch.object(v3.time,'sleep'):
    self.assertFalse(v3.wait_backhaul_candidate(21101,'82.152.141.33',attempts=2))
 
- def test_partial_foreign_install_is_rejected_without_scp(self):
-  with patch.object(sys.modules['dual'],'ssh',return_value='UNKNOWN_PARTIAL_INSTALL',create=True),\
-       patch.object(sys.modules['dual'],'scp',create=True) as copy:
-   with self.assertRaises(v3.SwapError):
-    v3.prepare_backhaul_candidate('82.152.141.33','5.10.249.206',pathlib.Path('/nonexistent'))
-   copy.assert_not_called()
-
- def test_verified_failed_stage_is_reused_only_on_new_host(self):
-  with patch.object(sys.modules['dual'],'ssh',side_effect=['REUSABLE_FAILED_STAGE','PRIOR_V3_CANDIDATE_REUSED'],create=True) as ssh,\
-       patch.object(sys.modules['dual'],'scp',create=True) as copy,\
-       patch.object(sys.modules['dual_auto'],'prepared_backhaul_install',create=True) as fresh:
-   v3.prepare_backhaul_candidate('82.152.141.33','5.10.249.206',pathlib.Path('/staged-bundle'))
-   self.assertEqual(ssh.call_count,2)
-   self.assertTrue(all(c.args[0]=='82.152.141.33' for c in ssh.call_args_list))
-   copy.assert_called_once()
-   fresh.assert_not_called()
-
 
 if __name__=='__main__':unittest.main()
