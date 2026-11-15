@@ -95,6 +95,13 @@ def journal(**kwargs):
     dual.atomic_write(JOURNAL, (json.dumps(content, indent=2) + "\n").encode())
 
 
+def committed_phase():
+    try:
+        return json.loads(JOURNAL.read_text()).get("phase") == "committed"
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def prior_incomplete():
     if JOURNAL.is_file():
         try:
@@ -503,7 +510,7 @@ def swap_mieru(old, new, work):
         print("SUCCESS MIERU " + new + " / " + cleanup, flush=True)
         return
     except BaseException:
-        if switched and (not JOURNAL.is_file() or json.loads(JOURNAL.read_text()).get("phase") != "committed"):
+        if switched and not committed_phase():
             print("  ROLLBACK: restoring previous Mieru config", flush=True)
             dual.atomic_write(config, old_bytes)
             with contextlib.suppress(Exception):
@@ -513,7 +520,7 @@ def swap_mieru(old, new, work):
             journal(phase="rolled_back", role="mieru", old=old, new=new, config_restored=restored)
         elif not switched:
             journal(phase="staging_failed", role="mieru", old=old, new=new)
-        if not switched or json.loads(JOURNAL.read_text()).get("phase") != "committed":
+        if not switched or not committed_phase():
             maybe_stop_candidate(new, "mieru")
         raise
     finally:
@@ -577,7 +584,7 @@ def swap_backhaul(old, new, iran, work):
         journal(phase="completed", role="backhaul", old=old, new=new, cleanup=cleanup)
         print("SUCCESS BACKHAUL " + new + " / " + cleanup, flush=True)
     except BaseException:
-        if (guard_added or committed) and (not JOURNAL.is_file() or json.loads(JOURNAL.read_text()).get("phase") != "committed"):
+        if (guard_added or committed) and not committed_phase():
             print("  ROLLBACK: recovering Iran Backhaul files and firewall", flush=True)
             with contextlib.suppress(Exception):
                 dual.ssh(new, "systemctl disable --now dual-ha-backhaul-client", timeout=12)
@@ -592,7 +599,7 @@ def swap_backhaul(old, new, iran, work):
             journal(phase="rolled_back", role="backhaul", old=old, new=new)
         elif not guard_added and not committed:
             journal(phase="staging_failed", role="backhaul", old=old, new=new)
-        if started_foreign and json.loads(JOURNAL.read_text()).get("phase") != "committed":
+        if started_foreign and not committed_phase():
             maybe_stop_candidate(new, "backhaul")
         raise
     finally:
