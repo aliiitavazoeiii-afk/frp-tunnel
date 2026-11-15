@@ -118,8 +118,8 @@ def probe(port, target_ip, *, label):
     trace = cmd(["curl", "-q", "-4", "--noproxy", "", "--silent", "--show-error",
                  "--socks5-hostname", f"127.0.0.1:{port}", "--connect-timeout", "5",
                  "--max-time", "12", "--fail", CF_TRACE], timeout=15, check=False)
-    ip_match = re.search(rb"(?m)^ip=(\d{1,3}(?:\.\d{1,3}){3})$", trace.stdout)
-    if trace.returncode or not ip_match or ip_match.group(1).decode() != target_ip:
+    ip_match = re.search(r"(?m)^ip=(\d{1,3}(?:\.\d{1,3}){3})$", trace.stdout)
+    if trace.returncode or not ip_match or ip_match.group(1) != target_ip:
         print("  Egress identity FAIL", flush=True)
         return False
     wins = 0
