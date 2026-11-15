@@ -20,19 +20,19 @@ class V3Tests(unittest.TestCase):
   self.assertEqual(v3.host_ip('82.152.132.220'),'82.152.132.220')
  def test_egress_mismatch_never_tests_download(self):
   import subprocess
-  response=subprocess.CompletedProcess([],0,b'ip=1.1.1.1\n',b'')
+  response=subprocess.CompletedProcess([],0,'ip=1.1.1.1\n',b'')
   with patch.object(v3,'cmd',return_value=response) as c:
    self.assertFalse(v3.probe(21102,'82.152.132.220',label='TEST'))
    self.assertEqual(c.call_count,1)
  def test_partial_download_rejected(self):
   import subprocess
-  trace=subprocess.CompletedProcess([],0,b'ip=82.152.132.220\n',b'')
+  trace=subprocess.CompletedProcess([],0,'ip=82.152.132.220\n',b'')
   bad=subprocess.CompletedProcess([],28,'200 1024 16.0 1.0','')
   with patch.object(v3,'cmd',side_effect=[trace,bad,bad,bad]):
    self.assertFalse(v3.probe(21102,'82.152.132.220',label='TEST'))
  def test_two_complete_downloads_accepted(self):
   import subprocess
-  trace=subprocess.CompletedProcess([],0,b'ip=82.152.132.220\n',b'')
+  trace=subprocess.CompletedProcess([],0,'ip=82.152.132.220\n',b'')
   good=subprocess.CompletedProcess([],0,'200 1048576 1.4 0.2','')
   bad=subprocess.CompletedProcess([],28,'200 1000 16.0 1.0','')
   with patch.object(v3,'cmd',side_effect=[trace,good,bad,good]):
