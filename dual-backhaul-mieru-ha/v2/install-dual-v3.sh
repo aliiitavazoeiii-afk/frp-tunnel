@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { echo 'Use sudo'; exit 2; }
 umask 077
-REF='f2be58b902e90732e2daf260ca1bc93333468bd8'
+REF='d3cf3c45a49018aa8a39f0b861355e146a980ef0'
 BASE="https://raw.githubusercontent.com/aliiitavazoeiii-afk/frp-tunnel/$REF/dual-backhaul-mieru-ha/v2"
 D='/opt/dual-ha/helper'
 [[ "$(readlink -f /usr/local/bin/dual)" == "$D/dual.py" ]] || { echo 'Unknown dual entrypoint'; exit 3; }
