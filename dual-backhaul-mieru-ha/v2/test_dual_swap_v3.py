@@ -148,6 +148,15 @@ class V3Maya4RegressionTests(unittest.TestCase):
    self.assertEqual(command.call_count,3)
    self.assertEqual(sleep.call_count,2)
 
+ def test_intentionally_drained_backhaul_weight_stays_zero(self):
+  import inspect
+  source=inspect.getsource(v3.swap_backhaul)
+  self.assertIn('if old_weight == 0:',source)
+  self.assertIn('if get_weight("backhaul") != 0:',source)
+  self.assertIn('set_weight("backhaul", 0)',source)
+  self.assertIn('if not wait_gateway("backhaul"):',source)
+  self.assertNotIn('set_weight("backhaul", 1)',source)
+
  def test_production_reverse_readiness_precedes_live_downloads(self):
   import inspect
   src=inspect.getsource(v3.swap_backhaul)
