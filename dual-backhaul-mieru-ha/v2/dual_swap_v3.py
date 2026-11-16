@@ -591,10 +591,17 @@ def swap_backhaul(old, new, iran, work):
             raise SwapError("New production reverse Backhaul did not become ready; rolling back")
         if not probe(LIVE["backhaul"], new, label="LIVE BACKHAUL"):
             raise SwapError("New production Backhaul data-plane verification failed")
-        if get_weight("backhaul") == 0:
-            set_weight("backhaul", 1)
-        if not wait_gateway("backhaul"):
-            raise SwapError("Backhaul live SOCKS passed but HAProxy did not enable the path")
+        if old_weight == 0:
+            # Weight zero was an intentional operational drain. Keep it so
+            # the operator can test the recovered node before admitting users.
+            if get_weight("backhaul") != 0:
+                set_weight("backhaul", 0)
+            print("  BACKHAUL READY; HAProxy weight remains 0 (operator-paused).", flush=True)
+        else:
+            if get_weight("backhaul") == 0:
+                set_weight("backhaul", old_weight)
+            if not wait_gateway("backhaul"):
+                raise SwapError("Backhaul live SOCKS passed but HAProxy did not enable the path")
         install_persistent_guard(iran)
         # A prior V3 run may have owned one INPUT jump; keep precisely one.
         if had_guard:
