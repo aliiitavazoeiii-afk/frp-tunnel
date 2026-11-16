@@ -172,14 +172,22 @@ def del_rule(rule):
 def prepared_backhaul_install(ip, iran, candidate):
     """Stage into a unique file: never clobber or reject a stale bundle from a prior attempt."""
     preflight = r"""set -eu
-if systemctl is-active --quiet dual-ha-backhaul-client 2>/dev/null ||
-   systemctl is-active --quiet dual-ha-mita 2>/dev/null; then
-  echo 'ACTIVE_TUNNEL_SERVICE_REFUSED' >&2; exit 21
+if systemctl is-active --quiet dual-ha-mita 2>/dev/null; then
+  echo 'ACTIVE_MIERU_REFUSED' >&2; exit 21
 fi
-if [ -e /etc/dual-ha/backhaul-foreign.toml ] ||
-   [ -d /opt/dual-ha-src/frp-tunnel ]; then
+if systemctl is-active --quiet dual-ha-backhaul-client 2>/dev/null; then
   if [ -f /etc/dual-ha/backhaul-foreign.toml ] &&
-     [ -d /opt/dual-ha-src/frp-tunnel ] &&
+     [ -x /opt/dual-ha/bin/backhaul ] &&
+     systemctl is-active --quiet danted &&
+     systemctl cat dual-ha-backhaul-client.service 2>/dev/null |
+       grep -Fq 'ExecStart=/opt/dual-ha/bin/backhaul -c /etc/dual-ha/backhaul-foreign.toml'; then
+    echo 'REUSE_ACTIVE_OWNED_BACKHAUL'
+  else
+    echo 'UNKNOWN_ACTIVE_INSTALL' >&2; exit 22
+  fi
+elif [ -e /etc/dual-ha/backhaul-foreign.toml ] ||
+     [ -d /opt/dual-ha-src/frp-tunnel ]; then
+  if [ -f /etc/dual-ha/backhaul-foreign.toml ] &&
      [ -x /opt/dual-ha/bin/backhaul ] &&
      systemctl is-active --quiet danted &&
      systemctl cat dual-ha-backhaul-client.service 2>/dev/null |
@@ -196,8 +204,13 @@ else
 fi
 """
     state = dual.ssh(ip, preflight, timeout=20).strip()
-    if state not in ("FRESH", "REUSE_FAILED_V3_CANDIDATE"):
+    if state not in ("FRESH", "REUSE_FAILED_V3_CANDIDATE", "REUSE_ACTIVE_OWNED_BACKHAUL"):
         raise RuntimeError("Unrecognized foreign installer preflight state")
+    if state == "REUSE_ACTIVE_OWNED_BACKHAUL":
+        print("  Selected VPS has an ACTIVE existing Backhaul client.", flush=True)
+        approval = input("  Type REUSE %s to stop/rekey only this VPS: " % ip).strip()
+        if approval != "REUSE " + ip:
+            raise RuntimeError("Active foreign Backhaul reuse was not approved")
     # The old helper used "test ! -e /root/dual-ha-backhaul-bundle.env".
     # This rejected hosts with harmless leftover bundle files and hid the reason.
     suffix = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
