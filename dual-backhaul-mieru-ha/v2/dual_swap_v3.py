@@ -584,6 +584,11 @@ def swap_backhaul(old, new, iran, work):
         cmd(["systemctl", "restart", "dual-ha-backhaul"], timeout=30)
         cmd(["systemctl", "restart", "dual-ha-backhaul-router"], timeout=30)
         dual.ssh(new, "systemctl enable --now dual-ha-backhaul-client", timeout=35)
+        # Restarting the Iran server removes the SOCKS listener until the new
+        # foreign reverse client completes authentication and registers ports.
+        # The staging lane already uses bounded readiness; production needs it too.
+        if not wait_backhaul_candidate(LIVE["backhaul"], new, attempts=12):
+            raise SwapError("New production reverse Backhaul did not become ready; rolling back")
         if not probe(LIVE["backhaul"], new, label="LIVE BACKHAUL"):
             raise SwapError("New production Backhaul data-plane verification failed")
         if get_weight("backhaul") == 0:
@@ -609,10 +614,23 @@ def swap_backhaul(old, new, iran, work):
             remove_production_guard(iran, had_guard=had_guard)
             with contextlib.suppress(Exception):
                 set_weight("backhaul", old_weight)
-            with contextlib.suppress(Exception):
+            services_restarted = False
+            try:
                 cmd(["systemctl", "restart", "dual-ha-backhaul"], timeout=25)
                 cmd(["systemctl", "restart", "dual-ha-backhaul-router"], timeout=25)
-            journal(phase="rolled_back", role="backhaul", old=old, new=new)
+                services_restarted = True
+            except Exception as restore_error:
+                print("  ROLLBACK WARNING: restoring Backhaul services failed: " +
+                      str(restore_error), flush=True)
+            # No SSH to old foreign host. A filtered old VPS cannot be forced
+            # back online, but a stale firewall guard must not be called success.
+            local_ready = is_listening(LIVE["backhaul"])
+            print(f"  ROLLBACK STATUS: config restored for {old}; "
+                  f"services_restarted={services_restarted} "
+                  f"local_socks_listening={local_ready}; "
+                  "verify old egress separately", flush=True)
+            journal(phase="rolled_back", role="backhaul", old=old, new=new,
+                    services_restarted=services_restarted, local_socks_listening=local_ready)
         elif not guard_added and not committed:
             journal(phase="staging_failed", role="backhaul", old=old, new=new)
         if started_foreign and not committed_phase():
