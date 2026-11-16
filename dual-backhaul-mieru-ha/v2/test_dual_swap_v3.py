@@ -229,6 +229,19 @@ class V3Maya4RegressionTests(unittest.TestCase):
     self.assertTrue(all(call.args[0]=='82.152.141.33' for call in ssh.call_args_list))
     scp.assert_called_once()
 
+ def test_remote_rekey_code_compiles_independently(self):
+  import ast, inspect, textwrap
+  tree=ast.parse(textwrap.dedent(inspect.getsource(real_auto.prepared_backhaul_install)))
+  scripts=[n.value.value for n in ast.walk(tree)
+           if isinstance(n,ast.Assign) and
+           isinstance(n.value,ast.Constant) and
+           isinstance(n.value.value,str) and
+           any(isinstance(t,ast.Name) and t.id=='rekey' for t in n.targets)]
+  self.assertEqual(len(scripts),1)
+  compile(scripts[0],'<foreign-rekey-script>','exec')
+  self.assertIn("'disable','--now'",scripts[0])
+  self.assertIn("BINARY_NOT_IDENTICAL_TO_IRAN",scripts[0])
+
  def test_active_foreign_reuse_requires_exact_operator_approval(self):
   from tempfile import TemporaryDirectory
   with TemporaryDirectory() as d:
