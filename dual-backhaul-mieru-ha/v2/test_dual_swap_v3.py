@@ -102,6 +102,7 @@ class V3TransactionTests(unittest.TestCase):
         patch.object(v3,'stage_firewall',return_value=['new']),\
         patch.object(v3,'_start_stage',return_value=[]),\
         patch.object(v3,'probe',return_value=False),\
+        patch.object(v3,'wait_backhaul_candidate',return_value=True),\
         patch.object(v3,'journal'),\
         patch.object(v3,'undo_stage_firewall'),\
         patch.object(v3,'maybe_stop_candidate'),\
@@ -146,6 +147,50 @@ class V3Maya4RegressionTests(unittest.TestCase):
    self.assertTrue(v3.wait_backhaul_candidate(21101,'82.152.141.33',attempts=4))
    self.assertEqual(command.call_count,3)
    self.assertEqual(sleep.call_count,2)
+
+ def test_production_reverse_readiness_precedes_live_downloads(self):
+  import inspect
+  src=inspect.getsource(v3.swap_backhaul)
+  start=src.index('dual.ssh(new, "systemctl enable --now dual-ha-backhaul-client"')
+  readiness=src.index('wait_backhaul_candidate(LIVE["backhaul"], new, attempts=12)')
+  download=src.index('probe(LIVE["backhaul"], new, label="LIVE BACKHAUL")')
+  self.assertLess(start,readiness)
+  self.assertLess(readiness,download)
+
+ def test_live_not_ready_rolls_back_without_old_ssh(self):
+  from tempfile import TemporaryDirectory
+  from unittest.mock import MagicMock
+  with TemporaryDirectory() as d:
+   work=pathlib.Path(d)
+   for name in ('backhaul.foreign-bundle.env','backhaul.production.toml','router.production.cfg'):
+    (work/name).write_text('candidate')
+   with patch.object(v3,'saved',return_value=b'old'),\
+        patch.object(v3,'get_weight',return_value=1),\
+        patch.object(v3,'guard_exists',return_value=False),\
+        patch.object(v3,'stage_backhaul',return_value={}),\
+        patch.object(v3,'stage_firewall',return_value=['allow']),\
+        patch.object(v3,'_start_stage',return_value=[]),\
+        patch.object(v3,'wait_backhaul_candidate',side_effect=[True,False]) as ready,\
+        patch.object(v3,'probe',return_value=True),\
+        patch.object(v3,'set_foreign_port'),\
+        patch.object(v3,'begin_production_guard'),\
+        patch.object(v3,'remove_production_guard'),\
+        patch.object(v3,'set_weight'),\
+        patch.object(v3,'journal'),\
+        patch.object(v3,'undo_stage_firewall'),\
+        patch.object(v3,'maybe_stop_candidate'),\
+        patch.object(v3,'cmd'),\
+        patch.object(v3,'is_listening',return_value=False),\
+        patch.object(v3,'committed_phase',return_value=False),\
+        patch.object(v3,'stop_process'),\
+        patch.object(sys.modules['dual'],'ssh',return_value='',create=True) as ssh,\
+        patch.object(sys.modules['dual'],'atomic_write',create=True) as write:
+    with self.assertRaises(v3.SwapError):
+     v3.swap_backhaul('185.190.52.166','82.152.141.33','5.10.249.206',work)
+    self.assertEqual(ready.call_count,2)
+    self.assertEqual(write.call_count,6)
+    self.assertEqual([c.args[1] for c in write.call_args_list[-3:]], [b'old']*3)
+    self.assertTrue(all(call.args[0]=='82.152.141.33' for call in ssh.call_args_list))
 
  def test_unreachable_reverse_canary_fails_closed(self):
   import subprocess
