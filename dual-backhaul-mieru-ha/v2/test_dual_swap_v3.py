@@ -220,6 +220,44 @@ class V3Maya4RegressionTests(unittest.TestCase):
     self.assertTrue(all(call.args[0]=='82.152.141.33' for call in ssh.call_args_list))
     scp.assert_called_once()
 
+ def test_active_foreign_reuse_requires_exact_operator_approval(self):
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   candidate=pathlib.Path(d)/'new.env'
+   candidate.write_text("BH_TOKEN='fake'\n")
+   with patch.object(sys.modules['dual'],'ssh',
+                     return_value='REUSE_ACTIVE_OWNED_BACKHAUL',create=True) as ssh, \
+        patch('builtins.input',return_value='NO'), \
+        patch.object(sys.modules['dual'],'scp',create=True) as scp:
+    with self.assertRaisesRegex(RuntimeError,'not approved'):
+     real_auto.prepared_backhaul_install('185.190.52.166','5.10.249.206',candidate)
+    self.assertEqual(ssh.call_count,1)
+    scp.assert_not_called()
+
+ def test_explicit_approved_previous_foreign_rekeys_only_selected_vps(self):
+  import hashlib
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   candidate=pathlib.Path(d)/'new.env'
+   candidate.write_text("BH_TOKEN='not-a-secret'\n")
+   expected=hashlib.sha256(b'fake-binary').hexdigest()
+   with patch.object(real_auto.Path,'read_bytes',return_value=b'fake-binary'), \
+        patch.object(sys.modules['dual'],'ssh',
+                     side_effect=['REUSE_ACTIVE_OWNED_BACKHAUL',expected,
+                                  'VERIFIED_PRIOR_BACKHAUL_REKEYED'],
+                     create=True) as ssh, \
+        patch('builtins.input',return_value='REUSE 185.190.52.166'), \
+        patch.object(sys.modules['dual'],'scp',create=True) as scp:
+    real_auto.prepared_backhaul_install('185.190.52.166','5.10.249.206',candidate)
+    self.assertEqual(ssh.call_count,3)
+    self.assertTrue(all(call.args[0]=='185.190.52.166' for call in ssh.call_args_list))
+    code=ssh.call_args_list[-1].args[1]
+    for required in ('BINARY_NOT_IDENTICAL_TO_IRAN','OLD_BACKHAUL_DOMAIN_OR_TLS_MISMATCH',
+                     'DANTE_LOOPBACK_NOT_VERIFIED','BACKHAUL_SERVICE_OWNERSHIP_NOT_VERIFIED',
+                     'os.replace(tmp,config)','disable'):
+     self.assertIn(required,code)
+    scp.assert_called_once()
+
  def test_unknown_foreign_install_is_never_reused(self):
   with patch.object(sys.modules['dual'],'ssh',side_effect=RuntimeError('UNKNOWN_PARTIAL_INSTALL'),
                     create=True), patch.object(sys.modules['dual'],'scp',create=True) as scp:
