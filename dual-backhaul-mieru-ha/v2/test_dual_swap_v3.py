@@ -164,27 +164,32 @@ class V3Maya4RegressionTests(unittest.TestCase):
    work=pathlib.Path(d)
    for name in ('backhaul.foreign-bundle.env','backhaul.production.toml','router.production.cfg'):
     (work/name).write_text('candidate')
-   with patch.object(v3,'saved',return_value=b'old'),\
-        patch.object(v3,'get_weight',return_value=1),\
-        patch.object(v3,'guard_exists',return_value=False),\
-        patch.object(v3,'stage_backhaul',return_value={}),\
-        patch.object(v3,'stage_firewall',return_value=['allow']),\
-        patch.object(v3,'_start_stage',return_value=[]),\
-        patch.object(v3,'wait_backhaul_candidate',side_effect=[True,False]) as ready,\
-        patch.object(v3,'probe',return_value=True),\
-        patch.object(v3,'set_foreign_port'),\
-        patch.object(v3,'begin_production_guard'),\
-        patch.object(v3,'remove_production_guard'),\
-        patch.object(v3,'set_weight'),\
-        patch.object(v3,'journal'),\
-        patch.object(v3,'undo_stage_firewall'),\
-        patch.object(v3,'maybe_stop_candidate'),\
-        patch.object(v3,'cmd'),\
-        patch.object(v3,'is_listening',return_value=False),\
-        patch.object(v3,'committed_phase',return_value=False),\
-        patch.object(v3,'stop_process'),\
-        patch.object(sys.modules['dual'],'ssh',return_value='',create=True) as ssh,\
-        patch.object(sys.modules['dual'],'atomic_write',create=True) as write:
+   ready=MagicMock(side_effect=[True,False])
+   ssh=MagicMock(return_value='')
+   write=MagicMock()
+   patches={
+    'saved':MagicMock(return_value=b'old'),
+    'get_weight':MagicMock(return_value=1),
+    'guard_exists':MagicMock(return_value=False),
+    'stage_backhaul':MagicMock(return_value={}),
+    'stage_firewall':MagicMock(return_value=['allow']),
+    '_start_stage':MagicMock(return_value=[]),
+    'wait_backhaul_candidate':ready,
+    'probe':MagicMock(return_value=True),
+    'set_foreign_port':MagicMock(),
+    'begin_production_guard':MagicMock(),
+    'remove_production_guard':MagicMock(),
+    'set_weight':MagicMock(),
+    'journal':MagicMock(),
+    'undo_stage_firewall':MagicMock(),
+    'maybe_stop_candidate':MagicMock(),
+    'cmd':MagicMock(),
+    'is_listening':MagicMock(return_value=False),
+    'committed_phase':MagicMock(return_value=False),
+    'stop_process':MagicMock()
+   }
+   with patch.multiple(v3,**patches), \
+        patch.multiple(sys.modules['dual'],ssh=ssh,atomic_write=write,create=True):
     with self.assertRaises(v3.SwapError):
      v3.swap_backhaul('185.190.52.166','82.152.141.33','5.10.249.206',work)
     self.assertEqual(ready.call_count,2)
