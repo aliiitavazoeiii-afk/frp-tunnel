@@ -226,8 +226,72 @@ def verify_ssh(new):
     dual_auto.authorize_new(new)
 
 
+def prepare_mieru_foreign(ip):
+    """Retry only a verified earlier Mita install on this selected candidate."""
+    verify = r'''
+import json,pathlib,re,sys
+ip=sys.argv[1]
+config=pathlib.Path('/etc/dual-ha/mita.json')
+bundle=pathlib.Path('/etc/dual-ha/mieru-bundle.env')
+service=pathlib.Path('/etc/systemd/system/dual-ha-mita.service')
+binpath=pathlib.Path('/opt/dual-ha/bin/mita')
+if pathlib.Path('/etc/dual-ha/backhaul-foreign.toml').exists():
+    raise SystemExit('REFUSE_BACKHAUL_HOST')
+if not any(p.exists() for p in (config,bundle,service,binpath)):
+    print('FRESH_MIERU')
+    raise SystemExit(0)
+if not all(p.is_file() and not p.is_symlink() for p in (config,bundle,service,binpath)):
+    raise SystemExit('UNKNOWN_PARTIAL_MIERU')
+data={}
+for line in bundle.read_text().splitlines():
+    match=re.fullmatch(r"([A-Z_]+)='([^']*)'",line)
+    if match: data[match.group(1)]=match.group(2)
+if (data.get('MIERU_REMOTE_IP')!=ip or data.get('MIERU_TCP_PORT')!='28443'
+    or not re.fullmatch('[A-Za-z0-9_-]+',data.get('MIERU_USER',''))
+    or not re.fullmatch('[0-9a-f]{64}',data.get('MIERU_PASSWORD',''))):
+    raise SystemExit('FOREIGN_MIERU_BUNDLE_MISMATCH')
+cfg=json.loads(config.read_text())
+if (cfg.get('portBindings')!=[{'port':28443,'protocol':'TCP'}]
+    or cfg.get('users')!=[{'name':data['MIERU_USER'],'password':data['MIERU_PASSWORD']}]):
+    raise SystemExit('FOREIGN_MIERU_CREDENTIALS_MISMATCH')
+unit=service.read_text()
+if ('ExecStart=/opt/dual-ha/bin/mita run' not in unit
+    or 'Environment=MITA_CONFIG_JSON_FILE=/etc/dual-ha/mita.json' not in unit
+    or 'User=mita' not in unit):
+    raise SystemExit('UNEXPECTED_MIERU_SERVICE')
+print('VERIFIED_PREVIOUS_MIERU_CANDIDATE')
+'''
+    state = dual.ssh(ip, "python3 - " + shlex.quote(ip),
+                     stdin=verify.encode(), timeout=20).strip()
+    if state == "FRESH_MIERU":
+        dual.prepped_remote_install("mieru", ip)
+    elif state == "VERIFIED_PREVIOUS_MIERU_CANDIDATE":
+        print("  Reusing verified previous Mieru candidate; no reinstall or rekey.", flush=True)
+        dual.ssh(ip, "systemctl enable --now dual-ha-mita", timeout=30)
+    else:
+        raise SwapError("Unknown foreign Mieru state: refusing install or reuse")
+
+
+def wait_mieru_live(ip, attempts=12):
+    """Wait for the restarted Mieru SOCKS to actually serve the correct egress."""
+    for i in range(1, attempts + 1):
+        r = cmd(["curl", "-q", "-4", "--noproxy", "", "--silent",
+                 "--show-error", "--socks5-hostname", "127.0.0.1:21002",
+                 "--connect-timeout", "3", "--max-time", "7",
+                 "--fail", CF_TRACE], timeout=10, check=False)
+        match = re.search(r"(?m)^ip=(\d{1,3}(?:\.\d{1,3}){3})$", r.stdout)
+        if r.returncode == 0 and match and match.group(1) == ip:
+            print(f"  LIVE MIERU READY on attempt {i}/{attempts}", flush=True)
+            return True
+        print(f"  Waiting for live Mieru {i}/{attempts}: exit={r.returncode} "
+              f"ip={match.group(1) if match else 'none'}", flush=True)
+        if i < attempts:
+            time.sleep(2)
+    return False
+
+
 def stage_mieru(new, work):
-    dual.prepped_remote_install("mieru", new)
+    prepare_mieru_foreign(new)
     remote = work / "mieru.foreign-bundle"
     dual.scp("root@" + new + ":/etc/dual-ha/mieru-bundle.env", str(remote))
     remote.chmod(0o600)
@@ -511,12 +575,19 @@ def swap_mieru(old, new, work):
         dual.atomic_write(config, (work / "mieru.production.json").read_bytes())
         switched = True
         cmd(["systemctl", "restart", "dual-ha-mieru"], timeout=30)
+        if not wait_mieru_live(new):
+            raise SwapError("Mieru did not become ready on :21002 with expected egress")
         if not probe(LIVE["mieru"], new, label="LIVE MIERU"):
             raise SwapError("New live Mieru failed transfer gate")
-        if get_weight("mieru") == 0:
-            set_weight("mieru", 1)
-        if not wait_gateway("mieru"):
-            raise SwapError("Mieru live SOCKS passed but HAProxy did not enable the path")
+        if old_weight == 0:
+            if get_weight("mieru") != 0:
+                set_weight("mieru", 0)
+            print("  MIERU READY; HAProxy weight remains 0 (operator-paused).", flush=True)
+        else:
+            if get_weight("mieru") == 0:
+                set_weight("mieru", old_weight)
+            if not wait_gateway("mieru"):
+                raise SwapError("Mieru live SOCKS passed but HAProxy did not enable the path")
         print("  LIVE MIERU + HAProxy verified; existing connections may have reconnected", flush=True)
         journal(phase="committed", role="mieru", old=old, new=new, work=str(work))
         cleanup = finalize_old_host(old, new, "mieru")
