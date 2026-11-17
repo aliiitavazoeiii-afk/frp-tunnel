@@ -49,6 +49,46 @@ class V3Tests(unittest.TestCase):
  def test_stage_backhaul_uses_a_disjoint_port(self):
   self.assertNotIn(v3.STAGE_BACKHAUL_TCP,(18443,443))
   self.assertNotIn(v3.STAGE['backhaul'],v3.LIVE.values())
+ def test_mieru_wait_until_real_socks_egress_ready(self):
+  import subprocess
+  failed=subprocess.CompletedProcess([],7,'','')
+  ready=subprocess.CompletedProcess([],0,'ip=152.237.230.232\n','')
+  with patch.object(v3,'cmd',side_effect=[failed,ready]) as mock_cmd,patch.object(v3.time,'sleep'):
+   self.assertTrue(v3.wait_mieru_live('152.237.230.232',attempts=3))
+   self.assertEqual(mock_cmd.call_count,2)
+
+ def test_mieru_wrong_egress_never_ready(self):
+  import subprocess
+  wrong=subprocess.CompletedProcess([],0,'ip=82.152.132.220\n','')
+  with patch.object(v3,'cmd',return_value=wrong) as mock_cmd,patch.object(v3.time,'sleep'):
+   self.assertFalse(v3.wait_mieru_live('152.237.230.232',attempts=2))
+   self.assertEqual(mock_cmd.call_count,2)
+
+ def test_retry_installed_mieru_never_reinstalls(self):
+  from unittest.mock import MagicMock
+  ssh=MagicMock(side_effect=['VERIFIED_PREVIOUS_MIERU_CANDIDATE',''])
+  with patch.object(sys.modules['dual'],'ssh',ssh,create=True),patch.object(sys.modules['dual'],'prepped_remote_install',create=True) as install:
+   v3.prepare_mieru_foreign('152.237.230.232')
+   install.assert_not_called()
+   self.assertEqual(ssh.call_args_list[1].args,
+                    ('152.237.230.232','systemctl enable --now dual-ha-mita'))
+
+ def test_unknown_mieru_never_reused(self):
+  with patch.object(sys.modules['dual'],'ssh',return_value='UNKNOWN_INSTALL',create=True),patch.object(sys.modules['dual'],'prepped_remote_install',create=True) as install:
+   with self.assertRaises(v3.SwapError):
+    v3.prepare_mieru_foreign('152.237.230.232')
+   install.assert_not_called()
+
+ def test_foreign_mieru_verification_script_compiles(self):
+  import inspect,ast,textwrap
+  tree=ast.parse(textwrap.dedent(inspect.getsource(v3.prepare_mieru_foreign)))
+  scripts=[n.value.value for n in ast.walk(tree) if isinstance(n,ast.Assign)
+           and isinstance(n.value,ast.Constant) and isinstance(n.value.value,str)
+           and any(isinstance(t,ast.Name) and t.id=='verify' for t in n.targets)]
+  self.assertEqual(len(scripts),1)
+  compile(scripts[0],'<foreign-mieru-verify>','exec')
+  self.assertIn('FOREIGN_MIERU_CREDENTIALS_MISMATCH',scripts[0])
+
  def test_mieru_staging_and_live_ports_differ(self):
   self.assertEqual(v3.STAGE['mieru'],21102)
   self.assertEqual(v3.LIVE['mieru'],21002)
@@ -71,6 +111,27 @@ class V3TransactionTests(unittest.TestCase):
      v3.swap_mieru('185.190.52.164','82.152.132.220',pathlib.Path(d))
     write.assert_not_called()
 
+ def test_mieru_success_keeps_weight_zero_if_operator_paused(self):
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as d:
+   work=pathlib.Path(d)
+   (work/'mieru.production.json').write_text('{"test":"candidate"}')
+   with patch.object(v3,'saved',return_value=b'OLD'),\
+        patch.object(v3,'get_weight',return_value=0),\
+        patch.object(v3,'stage_mieru',return_value=None),\
+        patch.object(v3,'wait_mieru_live',return_value=True),\
+        patch.object(v3,'probe',return_value=True),\
+        patch.object(v3,'journal'),\
+        patch.object(v3,'cmd'),\
+        patch.object(v3,'set_weight') as set_weight,\
+        patch.object(v3,'wait_gateway') as wait_gateway,\
+        patch.object(v3,'finalize_old_host',return_value='old_not_contacted'),\
+        patch.object(v3,'stop_process'),\
+        patch.object(sys.modules['dual'],'atomic_write',create=True):
+    v3.swap_mieru('82.152.132.220','152.237.230.232',work)
+    set_weight.assert_not_called()
+    wait_gateway.assert_not_called()
+
  def test_mieru_live_failure_restores_old_bytes(self):
   from tempfile import TemporaryDirectory
   with TemporaryDirectory() as d:
@@ -80,6 +141,7 @@ class V3TransactionTests(unittest.TestCase):
         patch.object(v3,'get_weight',return_value=1),\
         patch.object(v3,'stage_mieru',return_value=None),\
         patch.object(v3,'probe',side_effect=[True,False]),\
+        patch.object(v3,'wait_mieru_live',return_value=True),\
         patch.object(v3,'journal'),\
         patch.object(v3,'cmd'),\
         patch.object(v3,'maybe_stop_candidate'),\
