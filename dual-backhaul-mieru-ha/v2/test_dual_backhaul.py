@@ -120,13 +120,13 @@ class RotationChecks(unittest.TestCase):
                 "META": (live / "state.json", '{"mode":"active"}\\n')
             }
             for _, (file, text) in inputs.items():
-                file.write_text(text.replace("\\\\n", "\\n"))
+                file.write_text(text.replace("\\n", "\n"))
             patches = [patch.object(rotator, key, path) for key,(path,_) in inputs.items()]
             for item in patches: item.start()
             try:
                 with patch.object(rotator, "command", return_value=SimpleNamespace(returncode=0,stdout="",stderr="")):
                     rotator.prepare_local("82.152.132.112","89.89.89.89",work)
-                self.assertEqual((live / "iran.toml").read_text(), oldcfg.replace("\\\\n", "\\n"))
+                self.assertEqual((live / "iran.toml").read_text(), oldcfg.replace("\\n", "\n"))
                 self.assertIn("127.0.0.1:21103=127.0.0.1:11080",(work / "stage.toml").read_text())
                 self.assertIn("127.0.0.1:19089",(work / "stage.toml").read_text())
                 self.assertIn("bind 127.0.0.1:19088",(work / "stage-router.cfg").read_text())
