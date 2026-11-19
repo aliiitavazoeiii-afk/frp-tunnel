@@ -194,7 +194,7 @@ def main():
 
 def rollback(snapshot):
     old_weight=confirm_live()
-    assert re.fullmatch(r"/root/dual-backhaul-backups/poolguard-old-[0-9TZ]+\\.bin",snapshot), (
+    assert re.fullmatch(r"/root/dual-backhaul-backups/poolguard-old-[0-9TZ]+\.bin",snapshot), (
         "Supply exact foreign backup path shown at successful cutover"
     )
     print("ROLLBACK only changes the FOREIGN1 binary/service; old active flows disconnect.")
