@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 import dual
-from dual_swap_v3 import rotate as rotate_primary, recover as recover_primary
+from dual_swap_v3 import rotate as rotate_primary, recover as recover_primary, get_weight
 
 IRAN = "185.215.230.221"
 META = Path("/etc/dual-ha/bh2-experiment/state.json")
@@ -75,8 +75,12 @@ def status():
         state = stats.get("state", "UNKNOWN")
         print("  %-9s foreign=%-16s SOCKS=%-5d %s" %
               (role.upper(), active[role], PORTS[role], state))
-        print("        active=%s total=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
-              (stats.get("current", "?"), stats.get("total", "?"),
+        try:
+            weight = get_weight(BACKEND[role])
+        except (OSError, ValueError, RuntimeError):
+            weight = "?"
+        print("        active=%s total=%s weight=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
+              (stats.get("current", "?"), stats.get("total", "?"), weight,
                info.get("passed_probes", "?"),
                info.get("bulk_pass", "not measured"),
                info.get("bulk_last", {}).get("bytes", "?"),
