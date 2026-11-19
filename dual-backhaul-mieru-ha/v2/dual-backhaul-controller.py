@@ -89,16 +89,22 @@ def curl(port, url, extra=(), timeout=12):
 
 def short_probe(port, expected):
     def check(item):
+        started = time.monotonic()
         url, code = item
         if url.endswith("/cdn-cgi/trace"):
             r = curl(port, url)
-            return bool(r and r.returncode == 0 and
-                        "ip=" + expected in r.stdout.splitlines())
-        r = curl(port, url, ["-o", "/dev/null", "-w", "%{http_code}"])
-        return bool(r and r.returncode == 0 and r.stdout.strip() == code)
+            ok = bool(r and r.returncode == 0 and
+                      "ip=" + expected in r.stdout.splitlines())
+        else:
+            r = curl(port, url, ["-o", "/dev/null", "-w", "%{http_code}"])
+            ok = bool(r and r.returncode == 0 and r.stdout.strip() == code)
+        return ok, (time.monotonic() - started) if ok else None
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(check, TARGETS))
-    return sum(results), sum(results) >= 2
+    passed = sum(int(ok) for ok, _ in results)
+    good_times = [t for ok, t in results if ok]
+    average = round(sum(good_times) / len(good_times), 3) if good_times else None
+    return passed, passed >= 2, average
 
 def bulk_probe(port):
     r = curl(port, BULK_URL,
@@ -147,15 +153,15 @@ def main():
             now = time.monotonic()
             def inspect(role):
                 d = streak[role]
-                passed, short_ok = short_probe(PATHS[role], expected_ip(role))
+                passed, short_ok, latency = short_probe(PATHS[role], expected_ip(role))
                 due = now - d["last_bulk"] >= BULK_PERIOD
                 bulk = bulk_probe(PATHS[role]) if due else None
-                return passed, short_ok, bulk
+                return passed, short_ok, latency, bulk
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 results = dict(zip(PATHS, pool.map(inspect, PATHS)))
             report = {}
             for role, state in results.items():
-                passed, short_ok, bulk = state
+                passed, short_ok, latency, bulk = state
                 d = streak[role]
                 d["short_bad"] = 0 if short_ok else d["short_bad"] + 1
                 if bulk is not None:
@@ -177,7 +183,7 @@ def main():
                           " | bulk=" + str(d["bulk"]), flush=True)
                 report[role] = {
                     "available": up, "passed_probes": passed, "total_probes": 3,
-                    "latency_average_s": None, "consecutive_success": d["good"],
+                    "latency_average_s": latency, "consecutive_success": d["good"],
                     "consecutive_fail": d["short_bad"],
                     "bulk_verified": d["verified"], "bulk_pass": d["bulk_ok"],
                     "bulk_fail_streak": d["bulk_bad"],
