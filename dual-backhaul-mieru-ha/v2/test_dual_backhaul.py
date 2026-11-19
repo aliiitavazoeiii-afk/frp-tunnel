@@ -21,6 +21,28 @@ rotator = load("bh_rotate", "dual-backhaul2-rotate.py")
 menu = load("bh_menu", "dual_backhaul_menu.py")
 
 class ControllerChecks(unittest.TestCase):
+    def test_show_stat_csv_does_not_mistake_unknown_or_error_metadata_for_admin_failure(self):
+        class FakeSock:
+            def __init__(self):
+                self.parts = [
+                    b"# pxname,svname,status,description,check_status,check_desc\\n"
+                    b"dual_egress,backhaul,UP,unknown failure threshold,unknown,check error unknown\\n"
+                    b"dual_egress,mieru,UP,healthy,OK,healthy\\n", b""
+                ]
+                self.sent = b""
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def settimeout(self, value): pass
+            def connect(self, value): pass
+            def sendall(self, value): self.sent = value
+            def shutdown(self, value): pass
+            def recv(self, size): return self.parts.pop(0)
+        fake = FakeSock()
+        with patch.object(controller.socket, "socket", return_value=fake):
+            text = controller.api("show stat")
+        self.assertIn("unknown failure threshold", text)
+        self.assertEqual(fake.sent, b"show stat\\n")
+
     def test_fail_closed_on_two_https_failures(self):
         self.assertEqual(controller.decision(True, False, 2, 0, 0, True), "disable")
 
