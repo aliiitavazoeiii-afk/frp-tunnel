@@ -100,6 +100,18 @@ def health():
         print("  " + name.upper() + " = " + ("PASS" if ok else "FAIL"))
     print("\n  IMPORTANT: existing TCP streams are not migrated during an outage.")
 
+def jitter(samples=24):
+    if not 8 <= samples <= 80:
+        raise ValueError("Jitter sample count must be between 8 and 80")
+    audit = Path(__file__).resolve().parent / "dual-backhaul-jitter-audit.py"
+    if not audit.is_file():
+        raise RuntimeError("Read-only jitter audit missing: update sudo dual helper")
+    print("READ-ONLY jitter audit: no service config, anti-DPI or HAProxy changes.", flush=True)
+    result = subprocess.run([sys.executable, str(audit), "--samples", str(samples)],
+                            check=False)
+    if result.returncode:
+        raise RuntimeError("Jitter audit failed (exit %d)" % result.returncode)
+
 def logs():
     for unit in ("dual-ha-backhaul", "dual-ha-bh2-server",
                  "dual-ha-bh2-router", "dual-ha-bh2-tls",
@@ -152,7 +164,7 @@ def menu():
             print("\n  [1] Status  [2] Live HTTPS+download health")
             print("  [3] Replace BACKHAUL 1 foreign server")
             print("  [4] Replace BACKHAUL 2 foreign server")
-            print("  [5] Logs  [6] Recover interrupted swap  [0] Exit")
+            print("  [5] Logs  [6] Recover interrupted swap  [7] Jitter audit  [0] Exit")
             choice = input("\n  dual > ").strip()
             if choice == "0":
                 break
@@ -166,6 +178,8 @@ def menu():
                 replace(which, ip)
             elif choice == "5":
                 logs()
+            elif choice == "7":
+                jitter()
             elif choice == "6":
                 which = input("Recover backhaul1 or backhaul2? ").strip().lower()
                 recover(which)
@@ -193,13 +207,15 @@ def main():
         health()
     elif len(sys.argv) == 2 and sys.argv[1] == "logs":
         logs()
+    elif len(sys.argv) in (2, 3) and sys.argv[1] == "jitter":
+        jitter(int(sys.argv[2]) if len(sys.argv) == 3 else 24)
     elif len(sys.argv) == 4 and sys.argv[1] == "replace":
         replace(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 3 and sys.argv[1] == "recover":
         recover(sys.argv[2])
     else:
         raise RuntimeError(
-            "Usage: sudo dual [status|health|logs|replace backhaul1|backhaul2 NEW_IP|recover backhaul1|backhaul2]"
+            "Usage: sudo dual [status|health|jitter [8..80]|logs|replace backhaul1|backhaul2 NEW_IP|recover backhaul1|backhaul2]"
         )
 
 if __name__ == "__main__":
