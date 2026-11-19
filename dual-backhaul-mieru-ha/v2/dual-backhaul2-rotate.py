@@ -234,7 +234,25 @@ def run_stage(work):
             procs.append(p)
         finally:
             log.close()
+    # Record exact owned process IDs for crash/interruption recovery.
+    atomic(work / "stage-pids.json",
+           json.dumps({"pids": [p.pid for p in procs]}, indent=2) + "\n")
     return procs
+
+def recover_owned_stage(work):
+    pids = work / "stage-pids.json"
+    if not pids.is_file():
+        return
+    for pid in json.loads(pids.read_text()).get("pids", []):
+        if type(pid) is not int or pid < 2:
+            continue
+        try:
+            cmdline = Path("/proc/" + str(pid) + "/cmdline").read_bytes()
+            if str(work).encode() not in cmdline:
+                continue  # PID reused, or not owned by this rotation
+            os.killpg(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            continue
 
 def stop_stage(processes):
     for p in reversed(processes):
@@ -380,6 +398,11 @@ def recover():
     work = Path(record["work"])
     must(work.parent == WORK_ROOT and work.is_dir(), "Untrusted recovery directory")
     m = metadata()
+    recover_owned_stage(work)
+    # Stop only the selected candidate; never SSH or stop the former host.
+    with contextlib.suppress(Exception):
+        dual.ssh(record["new"], "systemctl disable --now " + FOREIGN_UNIT, timeout=12)
+    temporary_firewall(record["new"], "del")
     if phase == "cutover":
         for path in (BUNDLE, BH, ROUTER, META):
             prior = work / (path.name + ".prior")
