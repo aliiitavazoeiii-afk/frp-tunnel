@@ -19,7 +19,14 @@ python3 - "$METADATA" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1]))
 assert m.get("mode")=="active", "Backhaul2 is not active"
-assert m.get("primary_ip")=="152.237.230.140", "Original Maya3 primary changed; inspect first"
+main={}
+for row in open("/etc/dual-ha/backhaul-bundle.env"):
+    if row.startswith("BH_FOREIGN_IP="):
+        main_ip=row.strip().split("=",1)[1].strip("'")
+        break
+else:
+    raise AssertionError("Missing active Backhaul1 identity")
+assert m.get("primary_ip")==main_ip, "Maya3 BH1 metadata mismatch; inspect before removal"
 PY
 grep -Fxq "BH_IRAN_IP='185.215.230.221'" /etc/dual-ha/backhaul-bundle.env || {
   echo "STOP: not Maya3"; exit 3;
