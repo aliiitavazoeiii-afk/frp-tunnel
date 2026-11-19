@@ -130,6 +130,19 @@ def decision(enabled, short_ok, short_bad, bulk_bad, good, verified):
         return "enable"
     return None
 
+def common_bulk_probe_outage(results, streaks):
+    """A shared download-test outage must not administratively drain both paths
+    while their independent HTTPS/egress checks continue succeeding."""
+    for name in PATHS:
+        passed, short_ok, latency, bulk = results[name]
+        if not short_ok:
+            return False
+        before = streaks[name]["bulk_bad"]
+        projected = before if bulk is None else (0 if bulk[0] else before + 1)
+        if projected < BULK_FALL:
+            return False
+    return True
+
 def write(data):
     path = Path(STATUS)
     temp = path.with_suffix(".json.next")
@@ -160,6 +173,10 @@ def main():
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 results = dict(zip(PATHS, pool.map(inspect, PATHS)))
             report = {}
+            shared_bulk_failure = common_bulk_probe_outage(results, streak)
+            if shared_bulk_failure:
+                print("BULK SHARED-ORIGIN WARNING: both HTTPS paths pass; "
+                      "holding bulk-only shutdown to prevent dual false outage", flush=True)
             for role, state in results.items():
                 passed, short_ok, latency, bulk = state
                 d = streak[role]
@@ -175,6 +192,8 @@ def main():
                 up = current not in ("MAINT", "UNKNOWN", "STOPPED")
                 action = decision(up, short_ok, d["short_bad"], d["bulk_bad"],
                                   d["good"], d["verified"])
+                if shared_bulk_failure and action == "disable" and d["short_bad"] < SHORT_FALL:
+                    action = None
                 if action:
                     api(action + " server dual_egress/" + role)
                     up = action == "enable"
@@ -186,6 +205,7 @@ def main():
                     "latency_average_s": latency, "consecutive_success": d["good"],
                     "consecutive_fail": d["short_bad"],
                     "bulk_verified": d["verified"], "bulk_pass": d["bulk_ok"],
+                    "shared_bulk_probe_outage": shared_bulk_failure,
                     "bulk_fail_streak": d["bulk_bad"],
                     "bulk_last": d["bulk"], "actual_role": "backhaul2" if role == "mieru" else "backhaul1",
                     "expected_foreign_ip": expected_ip(role),
