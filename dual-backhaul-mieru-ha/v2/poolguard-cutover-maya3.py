@@ -192,9 +192,35 @@ def main():
                         print("BACKHAUL1 remains weight 0; surviving BACKHAUL2 online",file=sys.stderr)
             raise
 
+def rollback(snapshot):
+    old_weight=confirm_live()
+    assert re.fullmatch(r"/root/dual-backhaul-backups/poolguard-old-[0-9TZ]+\\.bin",snapshot), (
+        "Supply exact foreign backup path shown at successful cutover"
+    )
+    print("ROLLBACK only changes the FOREIGN1 binary/service; old active flows disconnect.")
+    if input("Type ROLLBACK BACKHAUL1 to continue: ").strip()!="ROLLBACK BACKHAUL1":
+        print("Cancelled");return
+    if old_weight:
+        set_weight("backhaul",0)
+    try:
+        print(ssh_restore(snapshot),flush=True)
+        assert probe(21001,PRIMARY,label="ROLLED-BACK BACKHAUL1"), "Original binary did not recover"
+        if old_weight:
+            set_weight("backhaul",old_weight)
+        print("SUCCESS: foreign Backhaul1 old binary restored.")
+    except BaseException:
+        print("BACKHAUL1 remains drained if recovery could not be verified.",file=sys.stderr)
+        raise
+
 if __name__=="__main__":
     try:
-        main()
+        if len(sys.argv)==3 and sys.argv[1]=="--rollback":
+            rollback(sys.argv[2])
+        elif len(sys.argv)==1:
+            main()
+        else:
+            print("Usage: poolguard-cutover-maya3.py [--rollback /root/dual-backhaul-backups/poolguard-old-TIMESTAMP.bin]")
+            sys.exit(2)
     except (OSError,ValueError,RuntimeError,AssertionError,subprocess.TimeoutExpired) as e:
         print("POOLGUARD ERROR:",str(e)[:600],file=sys.stderr)
         sys.exit(1)
