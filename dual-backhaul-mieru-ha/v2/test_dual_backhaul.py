@@ -78,6 +78,66 @@ class RotationChecks(unittest.TestCase):
                           "systemctl\", \"restart\", \"dual-ha-backhaul"):
             self.assertNotIn(forbidden, source)
 
+    def test_prepare_builds_independent_stage_and_preserves_live_files(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            live = d / "live"
+            live.mkdir()
+            work = d / "work"
+            work.mkdir()
+            oldtoken = "a" * 64
+            ctrl = "/assets/" + "b" * 32
+            tunnel = "/socket/" + "c" * 32
+            oldbundle = (
+                "BH_DOMAIN='bh3-new.biya2film.top'\\n"
+                "BH_IRAN_IP='185.215.230.221'\\n"
+                "BH_TOKEN='" + oldtoken + "'\\n"
+                "BH_CONTROL_PATH='" + ctrl + "'\\n"
+                "BH_TUNNEL_PATH='" + tunnel + "'\\n"
+                "BH_FOREIGN_IP='82.152.132.112'\\n"
+                "BH_TLS_PORT='18443'\\n"
+            )
+            oldcfg = (
+                '[server]\\nbind_addr = "127.0.0.1:19085"\\n'
+                'token = "' + oldtoken + '"\\n'
+                'ws_control_path = "' + ctrl + '"\\n'
+                'ws_tunnel_path = "' + tunnel + '"\\n'
+                'ports = [ "127.0.0.1:21002=127.0.0.1:11080" ]\\n'
+            )
+            oldrouter = (
+                "frontend ingress\\n  bind 127.0.0.1:19086\\n"
+                "  acl control_path path -i " + ctrl + "\\n"
+                "  acl tunnel_path path_beg " + tunnel + "/\\n"
+                "backend wsmux\\n  server backhaul2 127.0.0.1:19085\\n"
+            )
+            oldtls = ("accept = 0.0.0.0:18445\\n"
+                      "connect = 127.0.0.1:19086\\n")
+            inputs = {
+                "BUNDLE": (live / "foreign-bundle.env", oldbundle),
+                "BH": (live / "iran.toml", oldcfg),
+                "ROUTER": (live / "router.cfg", oldrouter),
+                "TLS": (live / "tls.conf", oldtls),
+                "META": (live / "state.json", '{"mode":"active"}\\n')
+            }
+            for _, (file, text) in inputs.items():
+                file.write_text(text.replace("\\\\n", "\\n"))
+            patches = [patch.object(rotator, key, path) for key,(path,_) in inputs.items()]
+            for item in patches: item.start()
+            try:
+                with patch.object(rotator, "command", return_value=SimpleNamespace(returncode=0,stdout="",stderr="")):
+                    rotator.prepare_local("82.152.132.112","89.89.89.89",work)
+                self.assertEqual((live / "iran.toml").read_text(), oldcfg.replace("\\\\n", "\\n"))
+                self.assertIn("127.0.0.1:21103=127.0.0.1:11080",(work / "stage.toml").read_text())
+                self.assertIn("127.0.0.1:19089",(work / "stage.toml").read_text())
+                self.assertIn("bind 127.0.0.1:19088",(work / "stage-router.cfg").read_text())
+                self.assertIn("accept = 0.0.0.0:18446",(work / "stage-tls.conf").read_text())
+                self.assertIn("connect = 127.0.0.1:19088",(work / "stage-tls.conf").read_text())
+                self.assertIn("BH_FOREIGN_IP='89.89.89.89'",(work / "candidate.env").read_text())
+                self.assertNotIn(oldtoken, (work / "candidate.env").read_text())
+                self.assertIn(oldtoken, (work / "iran.toml.prior").read_text())
+            finally:
+                for item in reversed(patches): item.stop()
+
     def test_wrapper_uses_existing_v3_for_first_backhaul(self):
         source = (ROOT / "dual_backhaul_menu.py").read_text()
         self.assertIn('rotate_primary("backhaul", new_ip)', source)
