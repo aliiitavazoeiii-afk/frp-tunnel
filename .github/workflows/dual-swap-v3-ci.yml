@@ -28,7 +28,8 @@ jobs:
           python3 test_dual_backhaul.py -v
           python3 -m py_compile dual-backhaul-jitter-audit.py test_dual_backhaul_jitter.py
           python3 test_dual_backhaul_jitter.py -v
-          bash -n install-dual-backhaul-maya3.sh remove-mieru-maya3.sh install-dual-jitter-maya3.sh
+          bash -n install-dual-backhaul-maya3.sh remove-mieru-maya3.sh install-dual-jitter-maya3.sh build-backhaul-poolguard.sh
+          python3 -m py_compile client-pool-guard.py poolguard-cutover-maya3.py
           bash -n maya3-bh2-foreign-start.sh maya3-bh2-router-repair.sh
           bash -n install-dual-v3.sh
           grep -q 'from dual_swap_v3 import rotate as v3_rotate' dual.py
