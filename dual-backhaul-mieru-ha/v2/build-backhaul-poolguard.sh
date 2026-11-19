@@ -23,11 +23,14 @@ cleanup(){ rm -rf "$ROOT"; }
 trap cleanup EXIT
 mkdir -p "$ROOT/src" "$ROOT/go"
 GO_BIN=""
-if command -v go >/dev/null 2>&1; then
+if command -v go >/dev/null 2>&1 &&
+  "$(command -v go)" version | grep -q ' go1[.]23[.]1 '; then
  GO_BIN="$(command -v go)"
-elif [[ -x /usr/lib/go-1.23/bin/go ]]; then
+elif [[ -x /usr/lib/go-1.23/bin/go ]] &&
+     /usr/lib/go-1.23/bin/go version | grep -q ' go1[.]23[.]1 '; then
  GO_BIN=/usr/lib/go-1.23/bin/go
-elif [[ -x /usr/local/go/bin/go ]]; then
+elif [[ -x /usr/local/go/bin/go ]] &&
+     /usr/local/go/bin/go version | grep -q ' go1[.]23[.]1 '; then
  GO_BIN=/usr/local/go/bin/go
 else
  echo "Using checksum-verified isolated Go 1.23.1 toolchain (no apt changes)"
@@ -40,8 +43,8 @@ else
  tar -xzf "$ROOT/go.tar.gz" -C "$ROOT/go"
  GO_BIN="$ROOT/go/go/bin/go"
 fi
-"$GO_BIN" version | grep -Eq ' go1\.(2[3-9]|[3-9][0-9])\.' || {
- echo "STOP: need Go >= 1.23; system toolchain not changed"; exit 3;
+"$GO_BIN" version | grep -q ' go1[.]23[.]1 ' || {
+ echo "STOP: require exactly Go 1.23.1 to preserve original build toolchain"; exit 3;
 }
 UPSTREAM="df7966f8f725837a680ea7b90bd37ea52666c277"
 PATCH_REF="e9111c6d78a922972482e3de720d1f82dca062d8"
