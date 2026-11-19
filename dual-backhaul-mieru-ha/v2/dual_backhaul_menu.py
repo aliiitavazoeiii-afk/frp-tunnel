@@ -117,6 +117,18 @@ def replace(which, new_ip):
     activate_compatibility()
     if which == "backhaul1":
         rotate_primary("backhaul", new_ip)
+        # The legacy Mieru rollback script checks this identity on return.
+        m = json.loads(META.read_text())
+        m["primary_ip"] = dual.read_bundle()["BH_FOREIGN_IP"]
+        import tempfile
+        fd, name = tempfile.mkstemp(prefix=".bh2-meta-", dir=str(META.parent))
+        with os.fdopen(fd, "w") as f:
+            json.dump(m, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, META)
     else:
         bh2().replace(new_ip)
 
