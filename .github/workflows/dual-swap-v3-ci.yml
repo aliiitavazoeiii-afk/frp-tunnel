@@ -4,6 +4,7 @@ on:
     branches:
       - feat/dual-transactional-rotation-v3-design
       - fix/v3-backhaul-stage-no-old-ssh
+      - dual-backhaul
   pull_request:
     paths:
       - 'dual-backhaul-mieru-ha/v2/dual_swap_v3.py'
@@ -23,6 +24,9 @@ jobs:
           python3 test_dual_swap_v3.py -v
           python3 -m py_compile maya3-second-backhaul-experiment.py test_maya3_second_backhaul.py
           python3 test_maya3_second_backhaul.py -v
+          python3 -m py_compile dual-backhaul-controller.py dual-backhaul2-rotate.py dual_backhaul_menu.py test_dual_backhaul.py
+          python3 test_dual_backhaul.py -v
+          bash -n install-dual-backhaul-maya3.sh remove-mieru-maya3.sh
           bash -n maya3-bh2-foreign-start.sh maya3-bh2-router-repair.sh
           bash -n install-dual-v3.sh
           grep -q 'from dual_swap_v3 import rotate as v3_rotate' dual.py
