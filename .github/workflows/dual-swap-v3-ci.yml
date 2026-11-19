@@ -23,7 +23,7 @@ jobs:
           python3 test_dual_swap_v3.py -v
           python3 -m py_compile maya3-second-backhaul-experiment.py test_maya3_second_backhaul.py
           python3 test_maya3_second_backhaul.py -v
-          bash -n maya3-bh2-foreign-start.sh
+          bash -n maya3-bh2-foreign-start.sh maya3-bh2-router-repair.sh
           bash -n install-dual-v3.sh
           grep -q 'from dual_swap_v3 import rotate as v3_rotate' dual.py
           grep -q 'Recover interrupted V3 operation' dual.py
