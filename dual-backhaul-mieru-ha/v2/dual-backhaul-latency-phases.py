@@ -98,8 +98,8 @@ def main():
     a.add_argument("--host",default="www.instagram.com")
     a.add_argument("--path",default="/robots.txt")
     args=a.parse_args()
-    if args.port not in (21001,21002,18080,11080):
-        a.error("Only known local SOCKS ports 21001, 21002, 18080, 11080")
+    if args.port not in (21001,21002,18080,11080,21111):
+        a.error("Only known local SOCKS ports 21001, 21002, 18080, 11080, 21111")
     if not (5<=args.samples<=30):
         a.error("samples must be between 5 and 30")
     context=ssl.create_default_context()
