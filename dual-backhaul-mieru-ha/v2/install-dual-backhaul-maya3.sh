@@ -89,6 +89,8 @@ systemctl is-active --quiet dual-ha-v2-health || {
   echo "Controller did not start; previous version restored" >&2
   exit 4
 }
+printf "%s\n" "$B" > /root/dual-backhaul-backups/installed-current
+chmod 0600 /root/dual-backhaul-backups/installed-current
 echo "INSTALLED DUAL BACKHAUL helper and BULK-aware FAILOVER controller"
 echo "HAPROXY & leastconn untouched. Xray and both Backhaul instances untouched."
 echo "ROLLBACK: sudo bash $B/rollback.sh"
