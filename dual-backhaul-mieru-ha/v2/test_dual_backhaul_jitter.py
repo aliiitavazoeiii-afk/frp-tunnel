@@ -40,11 +40,11 @@ class TestJitter(unittest.TestCase):
         self.assertNotIn("-X",cmd)
     def test_tcp_stats_parses_retrans_current_and_total(self):
         ss_output = (
-            "Recv-Q Send-Q Local Address:Port Peer Address:Port\\n"
-            "0 0 185.215.230.221:18443 152.237.230.140:51234\\n"
-            "\\trtt:138.5/12.0 rto:320 retrans:1/17 bytes_retrans:4096 cwnd:9\\n"
-            "0 0 185.215.230.221:18443 152.237.230.140:51235\\n"
-            "\\trtt:1472.0/20.0 rto:1700 retrans:0/3 bytes_retrans:1000 cwnd:6\\n"
+            "Recv-Q Send-Q Local Address:Port Peer Address:Port\n"
+            "0 0 185.215.230.221:18443 152.237.230.140:51234\n"
+            "\trtt:138.5/12.0 rto:320 retrans:1/17 bytes_retrans:4096 cwnd:9\n"
+            "0 0 185.215.230.221:18443 152.237.230.140:51235\n"
+            "\trtt:1472.0/20.0 rto:1700 retrans:0/3 bytes_retrans:1000 cwnd:6\n"
         )
         empty = ""
         with patch.object(a, "run", side_effect=[
