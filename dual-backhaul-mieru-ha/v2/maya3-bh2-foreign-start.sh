@@ -15,7 +15,7 @@ systemctl is-active --quiet danted || { echo 'Fresh Dante egress is not active' 
 python3 - "$BUNDLE" "$CFG" "$EXPECTED_IP" <<'PY'
 from pathlib import Path
 import ipaddress,re,sys
-envfile,cfgfile,expected = map(Path,sys.argv[1:3]) if False else (Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3])
+envfile, cfgfile, expected = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 assert ipaddress.ip_address(expected).version == 4
 bundle={}
 for row in envfile.read_text().splitlines():
