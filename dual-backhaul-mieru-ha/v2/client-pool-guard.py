@@ -30,11 +30,6 @@ source=change(source,
     "\tpoolConnections: 0,\n\t\tloadConnections: 0,\n\t\tpoolSlots:       0,\n",
     "constructor")
 
-source=change(source,
-    "\tc.poolConnections = 0\n\tc.loadConnections = 0\n",
-    "\tc.poolConnections = 0\n\tc.loadConnections = 0\n\tatomic.StoreInt32(&c.poolSlots, 0)\n",
-    "restart")
-
 helpers=r'''
 // maxLivePool is a finite cap on concurrent physical reverse connections.
 // The existing mux_con stream limit is unchanged. With connection_pool=16
