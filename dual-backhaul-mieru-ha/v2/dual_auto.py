@@ -245,7 +245,7 @@ def field(name):
     if len(matches) != 1: raise SystemExit('UNKNOWN_FOREIGN_CONFIG_'+name)
     return matches[0]
 domain = candidate.get('BH_DOMAIN','')
-if not domain or field('tls_server_name') != domain or field('remote_addr') not in (domain+':18443', domain+':18444'):
+if not domain or field('tls_server_name') != domain or field('remote_addr') not in (domain+':18443', domain+':18444', domain+':18445', domain+':18446'):
     raise SystemExit('CANDIDATE_DOMAIN_MISMATCH')
 verified = False
 for path in pathlib.Path('/root').glob('.dual-ha-backhaul-candidate-*.env'):
@@ -332,7 +332,7 @@ if listener.returncode or '127.0.0.1:11080' not in listener.stdout:
 original=config.read_text()
 if (one(original,'transport')!='wssmux' or
     one(original,'tls_server_name')!=domain or
-    one(original,'remote_addr')!=domain+':18443' or
+    one(original,'remote_addr') not in (domain+':18443',domain+':18445',domain+':18446') or
     'tls_skip_verify = false' not in original):
     fail('OLD_BACKHAUL_DOMAIN_OR_TLS_MISMATCH')
 if not re.fullmatch('[a-f0-9]{64}',one(original,'token')):
