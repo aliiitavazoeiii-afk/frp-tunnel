@@ -47,7 +47,7 @@ GUARD_UNIT = "/etc/systemd/system/dual-ha-bh2-guard.service"
 
 def command(*args, timeout=30, check=True, input_data=None):
     r = subprocess.run(args, input=input_data, capture_output=True,
-                       timeout=timeout, text=isinstance(input_data, str))
+                       timeout=timeout, text=True)
     if check and r.returncode:
         error = r.stderr if isinstance(r.stderr, str) else (r.stderr or b"").decode(errors="replace")
         raise RuntimeError("Command failed (" + str(r.returncode) + "): " + " ".join(args[:3]) + " " + error[-400:])
