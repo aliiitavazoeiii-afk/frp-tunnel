@@ -60,8 +60,8 @@ func (c *WsMuxTransport) reservePoolSlot() bool {
 }
 '''
 source=change(source,
-    "\treturn client\n}\n\nfunc (c *WsMuxTransport) Start()",
-    "\treturn client\n}\n"+helpers+"\nfunc (c *WsMuxTransport) Start()",
+    "func (c *WsMuxTransport) Start()",
+    helpers+"\nfunc (c *WsMuxTransport) Start()",
     "pool helpers")
 
 source=change(source,
