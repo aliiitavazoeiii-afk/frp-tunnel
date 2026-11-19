@@ -144,6 +144,10 @@ def tcp_stats():
             "rtt_p95_ms":percentile([float(v["rtt_ms"]) for v in vals if "rtt_ms" in v],95),
             "max_retrans_count":max([int(v["retrans"].split("/")[0]) for v in vals
                                    if "retrans" in v]+[0]),
+            "max_retrans_total":max([int(v["retrans"].split("/")[1]) for v in vals
+                                   if "retrans" in v]+[0]),
+            "sum_retrans_total":sum(int(v["retrans"].split("/")[1]) for v in vals
+                                    if "retrans" in v),
             "sum_bytes_retrans":sum(int(v.get("bytes_retrans",0)) for v in vals),
         }
     return data
@@ -226,18 +230,23 @@ def audit(n,interval,load):
 
     # Curl subprocesses for distinct paths run in parallel so spikes across
     # paths can be compared at approximately the same point in time.
-    with cf.ThreadPoolExecutor(max_workers=3) as pool:
+    with cf.ThreadPoolExecutor(max_workers=6) as pool:
         for i in range(n):
+            loads={}
+            if load and i in (n//3,2*n//3):
+                # Bounded 1-MiB download probes start BEFORE latency probes,
+                # exposing application TTFB under modest simultaneous traffic.
+                # Not a synthetic saturation or unlimited stress test.
+                loads={role:pool.submit(sample,PORTS[role],DOWNLOAD,20)
+                       for role in ("backhaul1","backhaul2")}
+                time.sleep(0.1)
             f={role:pool.submit(one_round,role) for role in PORTS}
             for role in PORTS:
                 res=f[role].result()
                 for target,value in res.items():
                     measurements[role][target].append(value)
-            if load and i in (n//3,2*n//3):
-                # Bounded 1-MiB transfers; not a saturation/stress test.
-                for role in ("backhaul1","backhaul2"):
-                    result=sample(PORTS[role], DOWNLOAD,timeout=20)
-                    load_results[role].append(result)
+            for role,future in loads.items():
+                load_results[role].append(future.result())
             if (i+1)%max(1,n//4)==0:
                 print("  progress %s/%s" % (i+1,n),flush=True)
             if i<n-1:
