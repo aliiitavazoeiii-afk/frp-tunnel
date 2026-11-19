@@ -1,0 +1,43 @@
+name: Custom Backhaul pool guard Go build
+
+on:
+  push:
+    branches: [dual-backhaul]
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/client-pool-guard.py'
+      - 'dual-backhaul-mieru-ha/v2/build-backhaul-poolguard.sh'
+      - '.github/workflows/dual-backhaul-poolguard-go.yml'
+  workflow_dispatch:
+
+jobs:
+  poolguard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.1'
+          cache: false
+      - name: Build unchanged anti-DPI patch stack plus bounded client pool
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/source
+          curl -fsSL --retry 2 \
+            "https://codeload.github.com/Musixal/Backhaul/tar.gz/df7966f8f725837a680ea7b90bd37ea52666c277" |
+            tar -xz -C /tmp/source --strip-components 1
+          RAW="https://raw.githubusercontent.com/aliiitavazoeiii-afk/backhaul-ha-installer/e9111c6d78a922972482e3de720d1f82dca062d8/custom-backhaul"
+          for f in apply_patch.py fix_wsmux_config.py fix_wss_alpn.py; do
+            curl -fsSLo "/tmp/$f" "$RAW/$f"
+            python3 "/tmp/$f" /tmp/source
+          done
+          python3 dual-backhaul-mieru-ha/v2/client-pool-guard.py /tmp/source
+          cd /tmp/source
+          go get github.com/refraction-networking/utls@v1.6.7
+          gofmt -w internal/client/transport/wsmux.go
+          go test ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/backhaul-poolguard .
+          test -s /tmp/backhaul-poolguard
+          grep -Fq 'func (c *WsMuxTransport) maxLivePool() int32' internal/client/transport/wsmux.go
+          echo "GO_BUILD_POOLGUARD_OK"
