@@ -52,6 +52,20 @@ for f in dual-backhaul-controller.py dual-backhaul2-rotate.py dual_backhaul_menu
     --connect-timeout 10 --max-time 90 "$BASE/$f" -o "$T/$f"
 done
 python3 -m py_compile "$T/"*.py
+# Do not touch the working controller until the new one passes read-only live
+# SOCKS/TLS/transfer tests against both CURRENT egress IPs.
+echo "Read-only dual-backhaul controller preflight..."
+if ! python3 "$T/dual-backhaul-controller.py" --diagnose; then
+  echo "STOP: candidate controller preflight failed; prior controller not touched." >&2
+  exit 4
+fi
+LIVE_EXEC="$(systemctl show -p ExecStart --value dual-ha-v2-health.service)"
+if [[ "$LIVE_EXEC" != *"/opt/dual-ha/controller.py"* ]]; then
+  echo "STOP: effective health service uses an unexpected script path:" >&2
+  echo "$LIVE_EXEC" >&2
+  echo "Do not overwrite controller.py until this path is reconciled." >&2
+  exit 4
+fi
 # Keep original V3 Python module and all current tunnel configs in place.
 cp -a "$HERE/dual_auto.py" "$B/dual_auto.py"
 if [[ -e "$HERE/dual_backhaul_menu.py" ]]; then cp -a "$HERE/dual_backhaul_menu.py" "$B/dual_backhaul_menu.py"; fi
@@ -102,6 +116,10 @@ PY
 done
 if [[ "$ready" != 1 ]]; then
   echo "Controller did not publish fresh bulk-aware state; restoring previous version." >&2
+  echo "=== DIAGNOSTIC: controller unit ===" >&2
+  systemctl show dual-ha-v2-health -p ExecStart -p MainPID --no-pager >&2 || true
+  echo "=== DIAGNOSTIC: latest controller logs ===" >&2
+  journalctl -u dual-ha-v2-health --no-pager -n 30 >&2 || true
   bash "$B/rollback.sh"
   exit 4
 fi
