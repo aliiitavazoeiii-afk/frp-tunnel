@@ -218,5 +218,37 @@ def main():
                   type(e).__name__ + ": " + str(e)[:260], flush=True)
         time.sleep(max(1, SLEEP_SECONDS - (time.monotonic() - started)))
 
+def diagnose():
+    """Read-only preview. Do not send enable/disable commands to production HAProxy."""
+    import sys
+    try:
+        print("Controller read-only diagnostics: no HAProxy changes", flush=True)
+        live = states()
+        results = {}
+        for role, port in PATHS.items():
+            ip = expected_ip(role)
+            if not ip:
+                raise RuntimeError("Missing expected foreign IP for " + role)
+            passed, ok, avg = short_probe(port, ip)
+            bulk_ok, bulk = bulk_probe(port)
+            results[role] = {
+                "foreign_ip": ip, "http_probes": passed, "https_healthy": ok,
+                "latency_s": avg, "bulk_ok": bulk_ok, "bulk": bulk,
+                "haproxy_state": live[role]
+            }
+        print(json.dumps(results, indent=2), flush=True)
+        if not all(r["https_healthy"] and r["bulk_ok"] for r in results.values()):
+            raise RuntimeError("One or more paths failed read-only probe")
+        return 0
+    except Exception as e:
+        print("DIAGNOSTIC FAILURE: " + repr(e), file=sys.stderr, flush=True)
+        return 1
+
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["--diagnose"]:
+        sys.exit(diagnose())
+    if sys.argv[1:]:
+        print("Usage: dual-backhaul-controller.py [--diagnose]", file=sys.stderr)
+        sys.exit(2)
     main()
