@@ -30,6 +30,8 @@ jobs:
           python3 test_dual_backhaul_jitter.py -v
           python3 -m py_compile dual-backhaul-latency-phases.py test_dual_backhaul_latency_phases.py
           python3 test_dual_backhaul_latency_phases.py -v
+          python3 -m py_compile warm-socks-canary.py test_warm_socks_canary.py
+          python3 test_warm_socks_canary.py -v
           bash -n install-dual-backhaul-maya3.sh remove-mieru-maya3.sh install-dual-jitter-maya3.sh build-backhaul-poolguard.sh
           python3 -m py_compile client-pool-guard.py poolguard-cutover-maya3.py
           bash -n maya3-bh2-foreign-start.sh maya3-bh2-router-repair.sh
