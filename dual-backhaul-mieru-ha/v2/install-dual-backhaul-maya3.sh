@@ -83,12 +83,28 @@ if ! sudo dual status; then
 fi
 # Only controller restart. NO HAProxy, Xray, Backhaul, Mieru or other services restart.
 systemctl restart dual-ha-v2-health
-sleep 3
-systemctl is-active --quiet dual-ha-v2-health || {
+# Require fresh output from the new controller, not merely systemd "active".
+ready=0
+for i in $(seq 1 12); do
+  if systemctl is-active --quiet dual-ha-v2-health &&
+    python3 - <<'PY'
+import json,datetime
+p="/run/dual-ha-v2/health.json"
+data=json.load(open(p))
+updated=datetime.datetime.fromisoformat(data["updated_utc"])
+age=(datetime.datetime.now(datetime.timezone.utc)-updated).total_seconds()
+assert data.get("policy")=="two-backhaul-bulk-v1", "Old controller still publishing"
+assert set(data.get("paths",{}))=={"backhaul","mieru"}
+assert -5 <= age <= 35
+PY
+  then ready=1; break; fi
+  sleep 3
+done
+if [[ "$ready" != 1 ]]; then
+  echo "Controller did not publish fresh bulk-aware state; restoring previous version." >&2
   bash "$B/rollback.sh"
-  echo "Controller did not start; previous version restored" >&2
   exit 4
-}
+fi
 printf "%s\n" "$B" > /root/dual-backhaul-backups/installed-current
 chmod 0600 /root/dual-backhaul-backups/installed-current
 echo "INSTALLED DUAL BACKHAUL helper and BULK-aware FAILOVER controller"
