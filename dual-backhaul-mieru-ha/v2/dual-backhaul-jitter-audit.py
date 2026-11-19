@@ -134,7 +134,11 @@ def tcp_stats():
                 ):
                     match=re.search(pat,row)
                     if match:
-                        stats[key]=match.group(1)
+                        # ss prints retrans:CURRENT/TOTAL; retain both groups.
+                        # Earlier we stored only CURRENT then indexed a missing
+                        # TOTAL field, aborting the entire read-only audit.
+                        stats[key]=(match.group(1)+"/"+match.group(2)
+                                    if key=="retrans" else match.group(1))
                 if stats:
                     vals.append(stats)
         data[str(port)] = {
