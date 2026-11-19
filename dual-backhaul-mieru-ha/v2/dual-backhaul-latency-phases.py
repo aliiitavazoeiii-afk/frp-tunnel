@@ -34,7 +34,7 @@ def connect_reply(s):
 
 def one(port,host,path,context):
     timestamps={}
-    t0=time.monotonic()
+    timestamps["start"]=time.monotonic()
     s=socket.create_connection(("127.0.0.1",port), timeout=12)
     s.settimeout(12)
     timestamps["local_connected"]=time.monotonic()
@@ -64,7 +64,7 @@ def one(port,host,path,context):
     def ms(a,b):
         return round(1000*(timestamps[b]-timestamps[a]),2)
     return {
-        "local_tcp_ms":ms("local_connected","local_connected") if port else 0,
+        "local_tcp_ms":ms("start","local_connected"),
         "socks_greeting_ms":ms("local_connected","greeting_done"),
         "socks_connect_ms":ms("greeting_done","socks_connected"),
         "tls_ms":ms("socks_connected","tls_done"),
@@ -81,7 +81,7 @@ def percentile(data,pct):
 
 def report(results, failures):
     print("PASSED:",len(results),"FAILED:",len(failures),flush=True)
-    for phase in ("socks_greeting_ms","socks_connect_ms","tls_ms","http_first_byte_ms","total_ms"):
+    for phase in ("local_tcp_ms","socks_greeting_ms","socks_connect_ms","tls_ms","http_first_byte_ms","total_ms"):
         series=[r[phase] for r in results]
         if series:
             print(f"{phase:23s} P50={statistics.median(series):7.1f} ms P95={percentile(series,95):7.1f} ms MAX={max(series):7.1f} ms",flush=True)
