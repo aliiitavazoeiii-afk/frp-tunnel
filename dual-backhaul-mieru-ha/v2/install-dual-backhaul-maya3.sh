@@ -107,9 +107,11 @@ p="/run/dual-ha-v2/health.json"
 data=json.load(open(p))
 updated=datetime.datetime.fromisoformat(data["updated_utc"])
 age=(datetime.datetime.now(datetime.timezone.utc)-updated).total_seconds()
-assert data.get("policy")=="two-backhaul-bulk-v1", "Old controller still publishing"
-assert set(data.get("paths",{}))=={"backhaul","mieru"}
-assert -5 <= age <= 35
+import sys
+if (data.get("policy") != "two-backhaul-bulk-v1"
+    or set(data.get("paths", {})) != {"backhaul", "mieru"}
+    or not (-5 <= age <= 35)):
+    sys.exit(1)
 PY
   then ready=1; break; fi
   sleep 3
