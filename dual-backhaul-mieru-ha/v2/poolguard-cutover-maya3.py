@@ -79,16 +79,22 @@ assert not snapshot.exists()
 shutil.copy2(src,snapshot); snapshot.chmod(0o700)
 tmp=src.with_name(src.name+'.poolguard.next')
 assert not tmp.exists()
-shutil.copy2(candidate,tmp);tmp.chmod(0o755)
-os.replace(tmp,src)
-result=subprocess.run(['systemctl','restart','dual-ha-backhaul-client'],
-                    capture_output=True,text=True,timeout=30)
-if result.returncode:
-    shutil.copy2(snapshot,src.with_name(src.name+'.prior.next'))
-    os.replace(src.with_name(src.name+'.prior.next'),src)
-    subprocess.run(['systemctl','restart','dual-ha-backhaul-client'],timeout=30)
-    raise SystemExit('RESTART_FAILED_RESTORED_PREVIOUS_BINARY')
-assert subprocess.run(['systemctl','is-active','--quiet','dual-ha-backhaul-client']).returncode==0
+try:
+    shutil.copy2(candidate,tmp);tmp.chmod(0o755)
+    os.replace(tmp,src)
+    result=subprocess.run(['systemctl','restart','dual-ha-backhaul-client'],
+                        capture_output=True,text=True,timeout=30)
+    if result.returncode:
+        raise RuntimeError('FOREIGN_RESTART_FAILED')
+    if subprocess.run(['systemctl','is-active','--quiet','dual-ha-backhaul-client']).returncode:
+        raise RuntimeError('FOREIGN_SERVICE_NOT_ACTIVE')
+except BaseException:
+    if snapshot.exists():
+        old=src.with_name(src.name+'.prior.next')
+        shutil.copy2(snapshot,old);old.chmod(0o755)
+        os.replace(old,src)
+        subprocess.run(['systemctl','restart','dual-ha-backhaul-client'],timeout=30)
+    raise
 print('POOLGUARD_ACTIVE')
 print('BACKUP='+str(snapshot))
 '''
