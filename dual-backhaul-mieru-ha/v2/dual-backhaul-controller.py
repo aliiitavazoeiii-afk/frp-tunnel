@@ -23,9 +23,9 @@ TARGETS = (
     ("https://www.cloudflare.com/cdn-cgi/trace", "200"),
     ("https://www.apple.com/library/test/success.html", "200"),
 )
-BULK_URL = "https://speed.cloudflare.com/__down?bytes=1048576"
-BULK_BYTES = 1048576
-BULK_PERIOD = 32
+BULK_URL = "https://speed.cloudflare.com/__down?bytes=262144"
+BULK_BYTES = 262144
+BULK_PERIOD = 45
 SLEEP_SECONDS = 8
 MIN_BULK_BYTES_PER_SECOND = 96 * 1024
 SHORT_FALL = 2
