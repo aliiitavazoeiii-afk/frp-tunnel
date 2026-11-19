@@ -38,6 +38,29 @@ class TestJitter(unittest.TestCase):
         self.assertIn("--socks5-hostname",cmd)
         self.assertEqual(cmd[cmd.index("--socks5-hostname")+1],"127.0.0.1:21001")
         self.assertNotIn("-X",cmd)
+    def test_tcp_stats_parses_retrans_current_and_total(self):
+        ss_output = (
+            "Recv-Q Send-Q Local Address:Port Peer Address:Port\\n"
+            "0 0 185.215.230.221:18443 152.237.230.140:51234\\n"
+            "\\trtt:138.5/12.0 rto:320 retrans:1/17 bytes_retrans:4096 cwnd:9\\n"
+            "0 0 185.215.230.221:18443 152.237.230.140:51235\\n"
+            "\\trtt:1472.0/20.0 rto:1700 retrans:0/3 bytes_retrans:1000 cwnd:6\\n"
+        )
+        empty = ""
+        with patch.object(a, "run", side_effect=[
+            SimpleNamespace(returncode=0,stdout=ss_output,stderr=""),
+            SimpleNamespace(returncode=0,stdout=empty,stderr="")
+        ]):
+            result=a.tcp_stats()
+        first=result["18443"]
+        self.assertEqual(first["transport_samples"],2)
+        self.assertEqual(first["max_retrans_count"],1)
+        self.assertEqual(first["max_retrans_total"],17)
+        self.assertEqual(first["sum_retrans_total"],20)
+        self.assertEqual(first["sum_bytes_retrans"],5096)
+        self.assertGreater(first["rtt_p95_ms"],1300)
+        self.assertEqual(result["18445"]["transport_samples"],0)
+
     def test_verify_flag_has_no_tunnel_interaction(self):
         with patch("sys.argv",["audit","--verify"]),patch.object(a,"audit") as do:
             self.assertEqual(a.main(),0)
