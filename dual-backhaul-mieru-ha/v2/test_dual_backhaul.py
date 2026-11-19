@@ -53,6 +53,18 @@ class ControllerChecks(unittest.TestCase):
             ok, _ = controller.bulk_probe(21002)
         self.assertFalse(ok)
 
+    def test_shared_download_probe_failure_does_not_drain_both_paths(self):
+        result = {
+            "backhaul": (3, True, 0.4, (False, {"reason":"timeout"})),
+            "mieru": (3, True, 0.5, (False, {"reason":"timeout"})),
+        }
+        streak = {"backhaul": {"bulk_bad":1}, "mieru": {"bulk_bad":1}}
+        self.assertTrue(controller.common_bulk_probe_outage(result, streak))
+        result["mieru"] = (3, True, 0.5, (True, {"reason":"ok"}))
+        self.assertFalse(controller.common_bulk_probe_outage(result, streak))
+        result["mieru"] = (1, False, None, (False, {"reason":"timeout"}))
+        self.assertFalse(controller.common_bulk_probe_outage(result, streak))
+
     def test_roles_preserve_legacy_haproxy_identifier(self):
         self.assertEqual(controller.PATHS, {"backhaul": 21001, "mieru": 21002})
         self.assertEqual(menu.BACKEND["backhaul2"], "mieru")
