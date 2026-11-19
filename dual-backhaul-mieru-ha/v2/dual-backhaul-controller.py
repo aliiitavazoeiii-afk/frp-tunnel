@@ -47,8 +47,16 @@ def api(command):
             if sum(map(len, chunks)) > 1024 * 1024:
                 raise ValueError("HAProxy response too large")
     answer = b"".join(chunks).decode(errors="replace")
-    if "error" in answer.lower() or "unknown" in answer.lower():
-        raise ValueError("HAProxy command failed")
+    # "show stat" is a CSV table: field names and free-text cells may contain
+    # "unknown" or "error" legitimately. Never string-match the entire CSV.
+    if command == "show stat":
+        if not answer.lstrip().startswith("# pxname,"):
+            raise ValueError("Unexpected HAProxy show stat response")
+        return answer
+    # Mutation commands return an empty response on success, or a short
+    # diagnostic on failure. Reject only explicit command-level errors.
+    if any(word in answer.lower() for word in ("error", "unknown command", "no such")):
+        raise ValueError("HAProxy admin command rejected: " + answer[:200])
     return answer
 
 def states():
