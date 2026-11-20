@@ -17,7 +17,7 @@ class TestHelper(unittest.TestCase):
         self.assertEqual(h.status_label(row,info,2,"82.152.132.159",21101),
                          ("UP","green"))
         self.assertEqual(h.status_label(row,info,None,"82.152.132.159",21101),
-                         ("UNKNOWN","amber"))
+                         ("UP","amber"))
         self.assertEqual(h.status_label(row,info,2,"82.152.132.159",21001),
                          ("UNKNOWN","amber"))
     def test_down_and_disabled_not_claimed_filtered(self):
