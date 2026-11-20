@@ -26,3 +26,6 @@ jobs:
           grep -Fq 'EXACT_MAYA3_POOLGUARD_SHA256_VERIFIED' maya1-foreign-fresh-poolguard.sh
           grep -Fq 'connection_pool = 16' maya1-foreign-fresh-poolguard.sh
           grep -Fq 'tls_skip_verify = false' maya1-foreign-fresh-poolguard.sh
+          grep -Fq -- '--resume-dante' maya1-foreign-fresh-poolguard.sh
+          grep -Fq 'DANTE_PARTIAL_INSTALL_RECOVERED' maya1-foreign-fresh-poolguard.sh
+          grep -Fq 'EXACT_MAYA3_POOLGUARD_SHA256_VERIFIED' maya1-foreign-fresh-poolguard.sh
