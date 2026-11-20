@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests of Maya1 HAProxy cutover guards; no live service mutations."""
 import importlib.util
+import io
+import json
+from contextlib import redirect_stdout
 from pathlib import Path
 import sys
 import tempfile
@@ -74,6 +77,42 @@ backend dual_egress
                 self.assertEqual(ctrl.expected_ip("mieru"),"152.237.230.77")
                 (stage/"bh2"/"state.json").write_text("{}")
                 self.assertEqual(ctrl.expected_ip("mieru"),"")
+
+    def test_failed_canary_reports_both_roles_not_traceback(self):
+        # Controller can legitimately exit 1 after JSON is printed.
+        # Preserve failed role details without ever allowing a cutover.
+        data={
+            "runtime_targets_match":False,
+            "backhaul":{"foreign_ip":"82.152.132.159","http_probes":3,
+                        "https_healthy":True,"bulk_ok":True,
+                        "bulk":{"bytes":262144,"speed_bps":245000}},
+            "mieru":{"foreign_ip":"152.237.230.77","http_probes":1,
+                     "https_healthy":False,"bulk_ok":False,
+                     "bulk":{"bytes":262144,"speed_bps":61000,"reason":"slow_or_short_download"}}
+        }
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"candidate.py"
+            path.write_text('PATHS = {"backhaul": 21101, "mieru": 21102}\\n'
+                            'EXPECTED = ["82.152.132.159", "152.237.230.77"]\\n'
+                            '# runtime_targets_match(\\n')
+            class Result:
+                stdout="prefix\\n"+json.dumps(data)
+                stderr="DIAGNOSTIC FAILURE: staged bulk checks"
+                returncode=1
+            def fake_call(argv,timeout=30,check=True):
+                return Result()
+            output=io.StringIO()
+            with patch.object(m,"call",side_effect=fake_call),redirect_stdout(output):
+                with self.assertRaisesRegex(RuntimeError,"staged health probes failed: mieru"):
+                    m.preflight_controller(path)
+            self.assertIn("CANARY backhaul",output.getvalue())
+            self.assertIn("CANARY mieru",output.getvalue())
+            self.assertIn("STAGED_CONTROLLER_DIAGNOSTIC_EXIT= 1",output.getvalue())
+
+    def test_main_rejects_errors_without_attributeerror(self):
+        source=(ROOT/"maya1-safe-cutover.py").read_text()
+        self.assertNotIn("fcntl.error",source)
+        self.assertIn("except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired)",source)
 
     def test_atomic_marker_and_restore_has_expected_backup_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
