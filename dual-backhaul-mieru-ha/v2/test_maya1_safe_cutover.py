@@ -85,16 +85,20 @@ backend dual_egress
             "runtime_targets_match":False,
             "backhaul":{"foreign_ip":"82.152.132.159","http_probes":3,
                         "https_healthy":True,"bulk_ok":True,
-                        "bulk":{"bytes":262144,"speed_bps":245000}},
+                        "bulk":{"bytes":1048576,"speed_bps":245000,"sample_pass":2}},
             "mieru":{"foreign_ip":"152.237.230.77","http_probes":1,
                      "https_healthy":False,"bulk_ok":False,
-                     "bulk":{"bytes":262144,"speed_bps":61000,"reason":"slow_or_short_download"}}
+                     "bulk":{"bytes":1048576,"speed_bps":61000,"sample_pass":0,"reason":"slow_or_short_download"}}
         }
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"candidate.py"
             path.write_text('PATHS = {"backhaul": 21101, "mieru": 21102}\\n'
                             'EXPECTED = ["82.152.132.159", "152.237.230.77"]\\n'
-                            '# runtime_targets_match(\\n')
+                            '# runtime_targets_match(\\n'
+                            'BULK_BYTES = 1048576\\n'
+                            'BULK_REQUIRED_PASSES = 2\\n'
+                            'BULK_MAX_SECONDS = 12\\n'
+                            'BULK_MAX_TTFB = 8\\n')
             class Result:
                 stdout="prefix\\n"+json.dumps(data)
                 stderr="DIAGNOSTIC FAILURE: staged bulk checks"
