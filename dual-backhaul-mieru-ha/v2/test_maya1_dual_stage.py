@@ -20,6 +20,16 @@ class TestStage(unittest.TestCase):
         self.assertEqual(m.TARGETS["bh2"],("152.237.230.77",18448,19092,19093,21102))
         busy={18443,21001,21002,18080,443}
         self.assertFalse(busy.intersection(p for r in m.TARGETS.values() for p in r[1:]))
+    def test_listener_bind_gate_rejects_real_conflict(self):
+        import socket
+        with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1",0))
+            port=listener.getsockname()[1]
+            with patch.object(m,"TARGETS",{"bh1":("8.8.8.8",port,0,0,0)}):
+                self.assertEqual(m.stage_bind_conflicts(),{port})
+        with patch.object(m,"TARGETS",{"bh1":("8.8.8.8",port,0,0,0)}):
+            self.assertEqual(m.stage_bind_conflicts(),set())
+
     def test_stage_secrets_independent_and_no_production_override(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
