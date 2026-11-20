@@ -8,6 +8,8 @@ on:
       - 'dual-backhaul-mieru-ha/v2/maya1-foreign-fresh-poolguard.sh'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_dual_stage.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-safe-cutover.py'
+      - 'dual-backhaul-mieru-ha/v2/maya1-emergency-persist-gateway.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya1_emergency_stabilize.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-next-controller.py'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_controller_bulk.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-concurrency-canary.py'
@@ -42,6 +44,8 @@ jobs:
           python3 test_maya1_concurrency_canary.py
           python3 -m py_compile maya1-dual-helper.py test_maya1_dual_helper.py
           python3 test_maya1_dual_helper.py
+          python3 -m py_compile maya1-emergency-persist-gateway.py test_maya1_emergency_stabilize.py
+          python3 test_maya1_emergency_stabilize.py
           bash -n install-maya1-helper.sh
           python3 -m py_compile maya1-quality-readonly-audit.py test_maya1_quality_audit.py
           python3 test_maya1_quality_audit.py
