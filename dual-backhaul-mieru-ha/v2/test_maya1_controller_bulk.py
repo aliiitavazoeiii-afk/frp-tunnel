@@ -75,7 +75,19 @@ class TestMaya1Bulk(unittest.TestCase):
                 for role in c.PATHS}
         streaks={role:{"bulk_bad":1} for role in c.PATHS}
         self.assertTrue(c.common_bulk_probe_outage(result,streaks))
-        self.assertEqual(c.decision(True,True,0,2,0,True),"disable")
+        # A speed-only failure must NEVER administratively drain HAProxy.
+        self.assertIsNone(c.decision(True,True,0,999,0,True,
+                                     peer_enabled=True,peer_short_ok=True))
+        # A real dead lane can fail over only with a verified working peer.
+        self.assertEqual(c.decision(True,False,4,0,0,True,
+                                    peer_enabled=True,peer_short_ok=True),"disable")
+        self.assertIsNone(c.decision(True,False,4,0,0,True,
+                                     peer_enabled=False,peer_short_ok=False))
+        self.assertIsNone(c.decision(True,False,4,0,0,True,
+                                     peer_enabled=True,peer_short_ok=False))
+        # Repair previously disabled lanes based on fresh HTTPS alone.
+        self.assertEqual(c.decision(False,True,0,3,3,False),
+                         "enable")
         result["mieru"]=(1,False,.4,(False,{"reason":"timeout_or_transport_error"}))
         self.assertFalse(c.common_bulk_probe_outage(result,streaks))
 if __name__=="__main__":unittest.main(verbosity=2)
