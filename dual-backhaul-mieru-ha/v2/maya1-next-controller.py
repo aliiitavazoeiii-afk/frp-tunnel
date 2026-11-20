@@ -27,7 +27,9 @@ TARGETS = (
 )
 BULK_URL = "https://speed.cloudflare.com/__down?bytes=1048576"
 BULK_BYTES = 1048576
-BULK_PERIOD = 120
+# Cost-controlled deep probe: ~1 MiB x 2 paths x 2 successful samples every 5 min.
+# Fast independent HTTPS checks still run every 8 seconds.
+BULK_PERIOD = 300
 BULK_ATTEMPTS = 3
 BULK_REQUIRED_PASSES = 2
 BULK_MAX_SECONDS = 12
