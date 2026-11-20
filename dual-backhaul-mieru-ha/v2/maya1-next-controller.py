@@ -25,9 +25,13 @@ TARGETS = (
     ("https://www.cloudflare.com/cdn-cgi/trace", "200"),
     ("https://www.apple.com/library/test/success.html", "200"),
 )
-BULK_URL = "https://speed.cloudflare.com/__down?bytes=262144"
-BULK_BYTES = 262144
-BULK_PERIOD = 45
+BULK_URL = "https://speed.cloudflare.com/__down?bytes=1048576"
+BULK_BYTES = 1048576
+BULK_PERIOD = 120
+BULK_ATTEMPTS = 3
+BULK_REQUIRED_PASSES = 2
+BULK_MAX_SECONDS = 12
+BULK_MAX_TTFB = 8
 SLEEP_SECONDS = 8
 MIN_BULK_BYTES_PER_SECOND = 96 * 1024
 SHORT_FALL = 2
@@ -126,22 +130,65 @@ def short_probe(port, expected):
     average = round(sum(good_times) / len(good_times), 3) if good_times else None
     return passed, passed >= 2, average
 
-def bulk_probe(port):
+def bulk_sample(port):
+    """One complete 1 MiB transfer. Avoid judging small cold requests.
+
+    Keep strict timeout/TTFB/throughput gates and exact response length.
+    Curl's speed_download uses elapsed time INCLUDING initial TTFB.
+    """
     r = curl(port, BULK_URL,
              ["-o", "/dev/null", "-w",
-              "%{http_code} %{size_download} %{speed_download} %{time_total}"],
+              "%{http_code} %{size_download} %{speed_download} "
+              "%{time_total} %{time_starttransfer}"],
              timeout=18)
     if not r or r.returncode:
-        return False, {"bytes": 0, "speed_bps": 0, "reason": "timeout_or_transport_error"}
+        return False, {"bytes": 0, "speed_bps": 0,
+                       "reason": "timeout_or_transport_error"}
     try:
-        code, downloaded, speed, seconds = r.stdout.strip().split()
-        n, rate = int(float(downloaded)), float(speed)
-        ok = code == "200" and n == BULK_BYTES and rate >= MIN_BULK_BYTES_PER_SECOND
+        code, downloaded, speed, seconds, ttfb = r.stdout.strip().split()
+        n, rate, elapsed, wait = (int(float(downloaded)), float(speed),
+                                  float(seconds), float(ttfb))
+        ok = (code == "200" and n == BULK_BYTES
+              and rate >= MIN_BULK_BYTES_PER_SECOND
+              and elapsed <= BULK_MAX_SECONDS and wait <= BULK_MAX_TTFB)
         return ok, {"bytes": n, "speed_bps": round(rate),
-                    "time_s": round(float(seconds), 3),
+                    "time_s": round(elapsed, 3), "ttfb_s": round(wait, 3),
                     "reason": "ok" if ok else "slow_or_short_download"}
     except (ValueError, TypeError):
         return False, {"bytes": 0, "speed_bps": 0, "reason": "malformed_probe"}
+
+
+def bulk_probe(port):
+    """2 successes out of at most 3 consecutive 1 MiB bounded transfers.
+
+    Stops after success or irrecoverable failure. Retain per-sample evidence so
+    the control room can tell verified low throughput from unmeasured quality.
+    """
+    samples = []
+    wins = 0
+    for attempt in range(BULK_ATTEMPTS):
+        good, record = bulk_sample(port)
+        samples.append(record)
+        wins += int(good)
+        if wins >= BULK_REQUIRED_PASSES:
+            break
+        if wins + (BULK_ATTEMPTS - len(samples)) < BULK_REQUIRED_PASSES:
+            break
+    passed = wins >= BULK_REQUIRED_PASSES
+    success = [r for r in samples if r.get("reason") == "ok"]
+    last = samples[-1]
+    summary = {
+        "bytes": BULK_BYTES if passed else last.get("bytes", 0),
+        "speed_bps": min(r["speed_bps"] for r in success) if success else last.get("speed_bps", 0),
+        "time_s": max(r["time_s"] for r in success) if success else last.get("time_s"),
+        "ttfb_s": max(r["ttfb_s"] for r in success) if success else last.get("ttfb_s"),
+        "sample_count": len(samples),
+        "sample_pass": wins,
+        "required_pass": BULK_REQUIRED_PASSES,
+        "samples": samples,
+        "reason": "ok" if passed else "insufficient_1m_quality",
+    }
+    return passed, summary
 
 def decision(enabled, short_ok, short_bad, bulk_bad, good, verified):
     if enabled and (short_bad >= SHORT_FALL or bulk_bad >= BULK_FALL):
