@@ -67,24 +67,34 @@ def cache():
     except (OSError,ValueError,TypeError,KeyError):
         return {},None
 
-def status_label(row,info,age,ip,port):
-    if age is None or not isinstance(info,dict) or not isinstance(row,dict):
+def status_label(row,info,age,ip,port,controller_active=True):
+    """Route status comes from live HAProxy, never from stale speed checks.
+
+    With controller stopped, live UP is real routing UP, but health is UNVERIFIED
+    (amber), not the previous cached DOWN. Bulk quality is NEVER a route gate.
+    """
+    if not isinstance(row,dict) or row.get("addr")!="127.0.0.1:"+str(port):
         return "UNKNOWN","amber"
-    if row.get("addr")!="127.0.0.1:"+str(port) or info.get("expected_foreign_ip")!=ip:
-        return "UNKNOWN","amber"
-    if row.get("status") not in ("UP",) or info.get("available") is False or (
-        type(info.get("passed_probes")) is int and info["passed_probes"]<2):
+    live=row.get("status")
+    if live in ("MAINT","DOWN","STOPPED"):
         return "DOWN","red"
+    if live!="UP":return "UNKNOWN","amber"
     try:enabled=int(row.get("weight","0"))>0
-    except ValueError:enabled=False
+    except (ValueError,TypeError):enabled=False
     if not enabled:return "DISABLED","amber"
-    if (info.get("available") is True and info.get("passed_probes",0)>=2
-            and info.get("bulk_pass") is True):
+    if (controller_active and age is not None and isinstance(info,dict)
+            and info.get("expected_foreign_ip")==ip
+            and info.get("passed_probes",0)>=2):
         return "UP","green"
-    return "UNKNOWN","amber"
+    return "UP","amber"
 
 def status():
     rows=api();info,age=cache()
+    controller_active=(subprocess.run(
+        ["systemctl","is-active","--quiet","dual-ha-v2-health"],
+        capture_output=True,timeout=5).returncode==0)
+    if not controller_active:
+        info,age={},None
     print("\n  DUAL BACKHAUL | MAYA1 | HAProxy leastconn")
     print("  ---------------------------------------------------------------")
     print("  IRAN: "+IRAN+" | REALITY/x-ui: "+
@@ -93,7 +103,7 @@ def status():
         backend,port,ip=state(role)
         row=rows.get(backend,{})
         item=info.get(backend,{})
-        result,color=status_label(row,item,age,ip,port)
+        result,color=status_label(row,item,age,ip,port,controller_active)
         print("  %-9s foreign=%s  SOCKS=%s %s" %
               (role.upper(),paint(ip,"cyan"),port,paint(result,color)))
         print("        active=%s total=%s weight=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
@@ -101,10 +111,15 @@ def status():
                item.get("passed_probes","?"),item.get("bulk_pass","not measured"),
                item.get("bulk_last",{}).get("bytes","?"),
                item.get("bulk_last",{}).get("speed_bps","?")))
-    print("  Controller cache age: "+(str(age) if age is not None else "stale")+"s")
+    print("  Health controller: "+("ACTIVE" if controller_active else "STOPPED (manual live routing)"))
+    print("  Controller cache age: "+(str(age) if age is not None else "unverified")+"s")
+    if not controller_active:
+        print("  Note: live HAProxy UP does not imply independent HTTPS quality verified.")
+    else:
+        print("  Slow BULK transfer is advisory; live HAProxy routing state shown above.")
     print("  ---------------------------------------------------------------")
     print("  Historical backend name 'mieru' actually carries BACKHAUL2.")
-    print("  Old Backhaul+Mieru retained for emergency rollback; not current routing.")
+    print("  Legacy rollback endpoints must be separately verified before use.")
 
 def probe(port,ip):
     opts=["curl","-q","-4","--noproxy","","--socks5-hostname",
