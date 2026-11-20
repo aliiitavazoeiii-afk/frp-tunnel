@@ -113,20 +113,42 @@ def preflight_controller(file):
          '"82.152.132.159"' in text and '"152.237.230.77"' in text and
          "runtime_targets_match(" in text,"staged controller source identity invalid")
     call(["python3","-m","py_compile",str(file)],8)
-    status=call(["python3",str(file),"--diagnose"],timeout=70)
+    # A probe failure is expected to exit nonzero. Preserve its JSON stdout:
+    # previous check=True discarded the useful per-path diagnostics.
+    status=call(["python3",str(file),"--diagnose"],timeout=70,check=False)
     start=status.stdout.find("{")
-    must(start>=0,"staged controller did not provide JSON diagnostics")
-    d=json.loads(status.stdout[start:])
+    if start<0:
+        print("CONTROLLER_DIAGNOSTIC_STDERR:",status.stderr.strip()[-500:],flush=True)
+        raise RuntimeError("staged controller did not provide JSON diagnostics")
+    try:
+        d=json.loads(status.stdout[start:])
+    except (ValueError,TypeError) as e:
+        raise RuntimeError("staged controller JSON malformed") from e
+    failed=[]
     for role,(_,ip,_) in NEW.items():
-        result=d[role]
-        must(result["foreign_ip"]==ip and
-             result["http_probes"]>=2 and
-             result["https_healthy"] is True and
-             result["bulk_ok"] is True,
-             "staged HTTPS/bulk preflight failed: "+role)
+        result=d.get(role)
+        if not isinstance(result,dict):
+            failed.append(role+": missing diagnostic")
+            continue
         print("CANARY",role,ip,
-              "HTTPS",result["http_probes"],"BULK",result["bulk"]["bytes"],
-              "RATE_BPS",result["bulk"]["speed_bps"],flush=True)
+              "HTTPS",result.get("http_probes"),"/3",
+              "SHORT_OK",result.get("https_healthy"),
+              "BULK_OK",result.get("bulk_ok"),
+              "BULK",result.get("bulk",{}),
+              flush=True)
+        if not (result.get("foreign_ip")==ip and
+                result.get("http_probes",0)>=2 and
+                result.get("https_healthy") is True and
+                result.get("bulk_ok") is True):
+            failed.append(role)
+    # Runtime should still point to old production endpoints BEFORE the cutover.
+    if d.get("runtime_targets_match") is not False:
+        raise RuntimeError("HAProxy state changed unexpectedly during preflight")
+    if status.returncode!=0 or failed:
+        print("STAGED_CONTROLLER_DIAGNOSTIC_EXIT=",status.returncode,flush=True)
+        if status.stderr.strip():
+            print("STAGED_CONTROLLER_DIAGNOSTIC_NOTE:",status.stderr.strip()[-350:],flush=True)
+        raise RuntimeError("staged health probes failed: "+", ".join(failed or ["controller"]))
 
 def persistent_text(existing,from_ports,to_ports):
     out=existing
@@ -312,7 +334,6 @@ def main():
             switch(Path(sys.argv[2]))
 if __name__=="__main__":
     try:main()
-    except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired,
-            fcntl.error) as e:
+    except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as e:
         print("MAYA1_CUTOVER_ERROR:",str(e)[:400],file=sys.stderr)
         sys.exit(1)
