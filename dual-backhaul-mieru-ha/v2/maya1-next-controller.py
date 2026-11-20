@@ -36,8 +36,8 @@ BULK_MAX_SECONDS = 12
 BULK_MAX_TTFB = 8
 SLEEP_SECONDS = 8
 MIN_BULK_BYTES_PER_SECOND = 96 * 1024
-SHORT_FALL = 2
-BULK_FALL = 2
+SHORT_FALL = 4  # Four consecutive independent 2-of-3 HTTPS probe failures
+BULK_FALL = 2  # Diagnostic counter only; NEVER disables routing
 RISE = 3
 
 def api(command):
@@ -192,11 +192,19 @@ def bulk_probe(port):
     }
     return passed, summary
 
-def decision(enabled, short_ok, short_bad, bulk_bad, good, verified):
-    if enabled and (short_bad >= SHORT_FALL or bulk_bad >= BULK_FALL):
-        return "disable"
-    if not enabled and short_ok and verified and good >= RISE:
+def decision(enabled, short_ok, short_bad, bulk_bad, good, verified,
+             peer_enabled=False, peer_short_ok=False):
+    """Only genuine connectivity failure may drain a route.
+
+    Bulk throughput is advisory and NEVER a reason for HAProxy MAINT.
+    Keep at least one known-working backend enabled. Re-enable on sustained
+    independent HTTPS success without waiting for a speed benchmark.
+    """
+    if not enabled and short_ok and good >= RISE:
         return "enable"
+    if (enabled and not short_ok and short_bad >= SHORT_FALL
+            and peer_enabled and peer_short_ok):
+        return "disable"
     return None
 
 def common_bulk_probe_outage(results, streaks):
@@ -247,7 +255,7 @@ def main():
             shared_bulk_failure = common_bulk_probe_outage(results, streak)
             if shared_bulk_failure:
                 print("BULK SHARED-ORIGIN WARNING: both HTTPS paths pass; "
-                      "holding bulk-only shutdown to prevent dual false outage", flush=True)
+                      "reporting quality only, never draining routes for bulk", flush=True)
             for role, state in results.items():
                 passed, short_ok, latency, bulk = state
                 d = streak[role]
@@ -257,14 +265,19 @@ def main():
                     d["bulk_ok"], d["bulk"] = bulk
                     d["verified"] = True
                     d["bulk_bad"] = 0 if d["bulk_ok"] else d["bulk_bad"] + 1
-                healthy = short_ok and d["bulk_ok"] and d["verified"]
-                d["good"] = d["good"] + 1 if healthy else 0
+                # Recover solely on independently verified connectivity.
+                # A slow speed.cloudflare.com response must not disable service.
+                d["good"] = d["good"] + 1 if short_ok else 0
                 current = before[role]["status"]
-                up = current not in ("MAINT", "UNKNOWN", "STOPPED")
+                up = current == "UP"
+                peer = next(other for other in PATHS if other != role)
+                peer_row = before[peer]
+                peer_up = peer_row["status"] == "UP" and str(peer_row["weight"]) not in ("0", "0/0")
+                peer_short_ok = results[peer][1] is True
                 action = decision(up, short_ok, d["short_bad"], d["bulk_bad"],
-                                  d["good"], d["verified"])
-                if shared_bulk_failure and action == "disable" and d["short_bad"] < SHORT_FALL:
-                    action = None
+                                  d["good"], d["verified"],
+                                  peer_enabled=peer_up,
+                                  peer_short_ok=peer_short_ok)
                 if action:
                     api(action + " server dual_egress/" + role)
                     up = action == "enable"
@@ -272,7 +285,10 @@ def main():
                           " | short=" + str(passed) + "/3" +
                           " | bulk=" + str(d["bulk"]), flush=True)
                 report[role] = {
-                    "available": up, "passed_probes": passed, "total_probes": 3,
+                    "available": up, "routing_enabled": up,
+                    "connectivity_healthy": short_ok,
+                    "quality_warning": bool(d["verified"] and not d["bulk_ok"]),
+                    "passed_probes": passed, "total_probes": 3,
                     "latency_average_s": latency, "consecutive_success": d["good"],
                     "consecutive_fail": d["short_bad"],
                     "bulk_verified": d["verified"], "bulk_pass": d["bulk_ok"],
@@ -283,7 +299,7 @@ def main():
                     "haproxy_before_action": current, "weight": before[role]["weight"],
                 }
             write({"updated_utc": datetime.now(timezone.utc).isoformat(),
-                   "policy": "two-backhaul-bulk-v1", "paths": report})
+                   "policy": "two-backhaul-connectivity-v2", "paths": report})
         except Exception as e:
             print("HEALTH WARNING (no HAProxy action): " +
                   type(e).__name__ + ": " + str(e)[:260], flush=True)
