@@ -29,7 +29,7 @@ grep -Fq 'def lane_health(' "$STAGE"
 grep -Fq 'NO_COLOR' "$STAGE"
 # Validate output in non-TTY restricted-SSH mode: must contain both roles
 # and never output color sequences or secret values.
-PROBE="$(NO_COLOR=1 python3 "$STAGE" status)"
+PROBE="$(PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" NO_COLOR=1 python3 "$STAGE" status)"
 grep -Fq "BACKHAUL1" <<<"$PROBE"
 grep -Fq "BACKHAUL2" <<<"$PROBE"
 if [[ "$PROBE" == *$'\033'* ]]; then
