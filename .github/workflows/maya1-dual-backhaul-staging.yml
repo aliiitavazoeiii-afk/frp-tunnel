@@ -13,6 +13,8 @@ on:
       - 'dual-backhaul-mieru-ha/v2/maya1-dual-helper.py'
       - 'dual-backhaul-mieru-ha/v2/install-maya1-helper.sh'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_dual_helper.py'
+      - 'dual-backhaul-mieru-ha/v2/maya1-quality-readonly-audit.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya1_quality_audit.py'
       - '.github/workflows/maya1-dual-backhaul-staging.yml'
   workflow_dispatch:
 
@@ -34,6 +36,8 @@ jobs:
           python3 -m py_compile maya1-dual-helper.py test_maya1_dual_helper.py
           python3 test_maya1_dual_helper.py
           bash -n install-maya1-helper.sh
+          python3 -m py_compile maya1-quality-readonly-audit.py test_maya1_quality_audit.py
+          python3 test_maya1_quality_audit.py
           grep -Fq 'EXACT_MAYA3_POOLGUARD_SHA256_VERIFIED' maya1-foreign-fresh-poolguard.sh
           grep -Fq 'connection_pool = 16' maya1-foreign-fresh-poolguard.sh
           grep -Fq 'tls_skip_verify = false' maya1-foreign-fresh-poolguard.sh
