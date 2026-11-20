@@ -27,6 +27,8 @@ jobs:
           python3 -m py_compile dual-backhaul-controller.py dual-backhaul2-rotate.py dual_backhaul_menu.py test_dual_backhaul.py
           python3 test_dual_backhaul.py -v
           python3 test_dual_color_helper.py -v
+          python3 -m py_compile maya1-dual-backhaul-readonly-audit.py test_maya1_dual_backhaul_readonly.py
+          python3 test_maya1_dual_backhaul_readonly.py -v
           bash -n install-dual-colors-maya3.sh
           python3 -m py_compile dual-backhaul-jitter-audit.py test_dual_backhaul_jitter.py
           python3 test_dual_backhaul_jitter.py -v
