@@ -39,5 +39,6 @@ jobs:
           go test ./...
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/backhaul-poolguard .
           test -s /tmp/backhaul-poolguard
+          echo 'aedf21b7e998c5a19bc5bff497764beb15d75f50171fd41ef759d3723b8b1bdb  /tmp/backhaul-poolguard' | sha256sum --check
           grep -Fq 'func (c *WsMuxTransport) maxLivePool() int32' internal/client/transport/wsmux.go
           echo "GO_BUILD_POOLGUARD_OK"
