@@ -111,7 +111,12 @@ def preflight_controller(file):
     text=file.read_text()
     must('PATHS = {"backhaul": 21101, "mieru": 21102}' in text and
          '"82.152.132.159"' in text and '"152.237.230.77"' in text and
-         "runtime_targets_match(" in text,"staged controller source identity invalid")
+         "runtime_targets_match(" in text and
+         "BULK_BYTES = 1048576" in text and
+         "BULK_REQUIRED_PASSES = 2" in text and
+         "BULK_MAX_SECONDS = 12" in text and
+         "BULK_MAX_TTFB = 8" in text,
+         "staged controller source identity/policy invalid")
     call(["python3","-m","py_compile",str(file)],8)
     # A probe failure is expected to exit nonzero. Preserve its JSON stdout:
     # previous check=True discarded the useful per-path diagnostics.
@@ -139,7 +144,9 @@ def preflight_controller(file):
         if not (result.get("foreign_ip")==ip and
                 result.get("http_probes",0)>=2 and
                 result.get("https_healthy") is True and
-                result.get("bulk_ok") is True):
+                result.get("bulk_ok") is True and
+                result.get("bulk",{}).get("bytes")==1048576 and
+                result.get("bulk",{}).get("sample_pass",0)>=2):
             failed.append(role)
     # Runtime should still point to old production endpoints BEFORE the cutover.
     if d.get("runtime_targets_match") is not False:
@@ -225,7 +232,7 @@ def check_gateway():
     must(r.returncode==0 and any(x in ips for x in r.stdout.splitlines()),
          "HAProxy gateway egress is not one of new Backhaul IPs")
 
-def wait_controller(seconds=55):
+def wait_controller(seconds=100):
     stop=time.monotonic()+seconds
     while time.monotonic()<stop:
         if active(SERVICE):
@@ -237,7 +244,9 @@ def wait_controller(seconds=55):
                         and 0<=age<15
                         and all(doc["paths"][r]["expected_foreign_ip"]==NEW[r][1] and
                                 doc["paths"][r]["passed_probes"]>=2 and
-                                doc["paths"][r]["bulk_pass"] is True
+                                doc["paths"][r]["bulk_pass"] is True and
+                                doc["paths"][r]["bulk_last"].get("bytes")==1048576 and
+                                doc["paths"][r]["bulk_last"].get("sample_pass",0)>=2
                                 for r in NEW)):
                     return
             except (OSError,ValueError,KeyError,TypeError):
