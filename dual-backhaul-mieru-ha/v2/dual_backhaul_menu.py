@@ -20,6 +20,38 @@ BACKEND = {"backhaul1": "backhaul", "backhaul2": "mieru"}
 PORTS = {"backhaul1": 21001, "backhaul2": 21002}
 OLD_SCP = dual.scp
 
+# ANSI is strictly presentation-only. Management's restricted SSH command uses
+# NO_COLOR=1 and no tty, so machine-readable status remains escape-free.
+_COLOR = bool(sys.stdout.isatty() and not os.environ.get("NO_COLOR") and
+              os.environ.get("TERM", "").lower() != "dumb")
+_RESET = "\033[0m"
+_COLORS = {"green": "\033[1;32m", "red": "\033[1;31m",
+           "cyan": "\033[1;36m", "yellow": "\033[1;33m"}
+
+def paint(value, color):
+    return (_COLORS[color] + str(value) + _RESET) if _COLOR else str(value)
+
+def lane_health(state, weight, info, age):
+    """green only for fresh end-to-end success; red for observed failure.
+    Unknown/stale/manual drain is amber, NEVER interpreted as filtered.
+    """
+    if age is None or age > 30 or not isinstance(info, dict):
+        return "UNKNOWN", "yellow"
+    passed = info.get("passed_probes")
+    bulk = info.get("bulk_pass")
+    available = info.get("available")
+    try:
+        enabled = int(weight) > 0
+    except (ValueError, TypeError):
+        enabled = False
+    if str(state).upper() not in ("UP", "OPEN") or available is False or (type(passed) is int and passed < 2):
+        return "DOWN", "red"
+    if not enabled:
+        return "DISABLED", "yellow"
+    if str(state).upper() == "UP" and available is True and type(passed) is int and passed >= 2 and bulk is True:
+        return "UP", "green"
+    return "UNKNOWN", "yellow"
+
 def scp_with_fallback(src, dst, *, timeout=40):
     try:
         return OLD_SCP(src, dst, timeout=timeout)
@@ -68,17 +100,21 @@ def status():
     backend = dual.haproxy_metrics()
     print("\n  DUAL BACKHAUL | MAYA3 | unchanged HAProxy leastconn")
     print("  ----------------------------------------------------------------")
-    print("  IRAN: " + IRAN + "  | REALITY/x-ui: " + dual.status("x-ui"))
+    xui = dual.status("x-ui")
+    xui_color = "green" if xui == "active" else ("red" if xui in ("inactive", "failed") else "yellow")
+    print("  IRAN: " + IRAN + "  | REALITY/x-ui: " + paint(xui, xui_color))
     for role in ("backhaul1", "backhaul2"):
         info = h.get(BACKEND[role], {})
         stats = backend.get(BACKEND[role], {})
         state = stats.get("state", "UNKNOWN")
-        print("  %-9s foreign=%-16s SOCKS=%-5d %s" %
-              (role.upper(), active[role], PORTS[role], state))
         try:
             weight = get_weight(BACKEND[role])
         except (OSError, ValueError, RuntimeError):
             weight = "?"
+        label, color = lane_health(state, weight, info, age)
+        foreign = paint(active[role], "cyan")
+        print("  %-9s foreign=%s  SOCKS=%-5d %s" %
+              (role.upper(), foreign, PORTS[role], paint(label, color)))
         print("        active=%s total=%s weight=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
               (stats.get("current", "?"), stats.get("total", "?"), weight,
                info.get("passed_probes", "?"),
@@ -184,7 +220,7 @@ def menu():
                 which = input("Recover backhaul1 or backhaul2? ").strip().lower()
                 recover(which)
             else:
-                print("Choose 0–6")
+                print("Choose 0–7")
         except (RuntimeError, ValueError, OSError,
                 subprocess.TimeoutExpired) as exc:
             print("ERROR: " + str(exc)[:400], file=sys.stderr)
