@@ -3,11 +3,16 @@
 # pre-staged Maya1 independent WSSMux lane; refuses existing services/configs.
 set -Eeuo pipefail
 umask 077
-if [[ "$EUID" != 0 || $# != 2 || ! "$1" =~ ^[0-9a-f]{40}$ ]];then
- echo "Usage: sudo bash maya1-foreign-fresh-poolguard.sh PINNED_COMMIT /root/dual-ha-backhaul-bundle.env";exit 2
+if [[ "$EUID" != 0 || ( $# != 2 && $# != 3 ) || ! "$1" =~ ^[0-9a-f]{40}$ ]];then
+ echo "Usage: sudo bash maya1-foreign-fresh-poolguard.sh PINNED_COMMIT /root/dual-ha-backhaul-bundle.env [--resume-dante]";exit 2
 fi
 REF="$1"
 BUNDLE="$2"
+RESUME=0
+if (( $# == 3 ));then
+ [[ "$3" == "--resume-dante" ]] || { echo "STOP: unsupported resume flag";exit 2; }
+ RESUME=1
+fi
 [[ "$BUNDLE" == /root/dual-ha-backhaul-bundle.env && -f "$BUNDLE" &&
    ! -L "$BUNDLE" && "$(stat -c '%u' "$BUNDLE")" == 0 ]] || {
  echo "STOP: root-only private bundle missing/wrong path";exit 3;
@@ -34,6 +39,7 @@ assert os.stat(p).st_mode & 0o077==0,"Bundle permissions must be 0600"
 PY
 # Refuse any existing related service or config, even if inactive.
 for service in dual-ha-backhaul-client dual-ha-mita danted; do
+ if [[ "$service" == "danted" && "$RESUME" == 1 ]];then continue;fi
  if [[ -e "/etc/systemd/system/$service.service" ]] ||
     systemctl is-active --quiet "$service" 2>/dev/null;then
    echo "STOP: $service already installed. Fresh VPS required.";exit 3
@@ -41,9 +47,11 @@ for service in dual-ha-backhaul-client dual-ha-mita danted; do
 done
 for f in /etc/danted.conf /etc/dual-ha/backhaul-foreign.toml \
          /etc/dual-ha/mita.json /opt/dual-ha/bin/backhaul; do
+ if [[ "$f" == "/etc/danted.conf" && "$RESUME" == 1 ]];then continue;fi
  [[ ! -e "$f" ]] || { echo "STOP: existing file $f";exit 3; }
 done
 for p in 11080 28443; do
+ if [[ "$p" == 11080 && "$RESUME" == 1 ]];then continue;fi
  if ss -Hlnpt "( sport = :$p )" | grep -q LISTEN;then
    echo "STOP: port $p occupied";exit 3
  fi
@@ -54,13 +62,74 @@ if [[ -n "$PUBLIC" && "$PUBLIC" != "$BH_FOREIGN_IP" ]];then
  echo "STOP: outgoing public IP differs: $PUBLIC expected $BH_FOREIGN_IP";exit 3
 fi
 echo "FRESH_FOREIGN_MATCH: $BH_FOREIGN_IP -> $BH_DOMAIN:$BH_TLS_PORT"
-echo "Preparing packages for foreign-only Dante and pinned Go build..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y ca-certificates curl python3 tar openssl git \
-                  dante-server iproute2
-# Package postinstall might start a default Dante: stop ONLY the new service.
-systemctl stop danted.service 2>/dev/null || true
+
+# On a prior partial install, prove ownership of the exact Dante configuration
+# before restarting it; do not overwrite or touch an unknown SOCKS service.
+if (( RESUME ));then
+ echo "PARTIAL_FOREIGN_RESUME: verifying previously generated local-only Dante"
+ [[ -f /etc/danted.conf && ! -L /etc/danted.conf ]] || {
+   echo "STOP: prior danted.conf missing or symlink";exit 3;
+ }
+ EXTDEV="$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')"
+ [[ "$EXTDEV" =~ ^[A-Za-z0-9_.:-]+$ ]] || { echo "STOP: unknown external interface";exit 3; }
+ # Validate all policy-critical rules, with complete file equality below.
+ EXPECTED_CONF="$(cat <<EOF
+logoutput: syslog
+internal: 127.0.0.1 port = 11080
+external: $EXTDEV
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+client pass {
+  from: 127.0.0.1/32 to: 0.0.0.0/0
+  log: error
+}
+socks pass {
+  from: 127.0.0.1/32 to: 0.0.0.0/0
+  command: connect
+  protocol: tcp
+  log: error
+}
+EOF
+)"
+ [[ "$(cat /etc/danted.conf)" == "$EXPECTED_CONF" ]] || {
+   echo "STOP: previous Dante config differs. Refusing to replace it.";exit 3;
+ }
+ command -v danted >/dev/null || { echo "STOP: Dante binary missing";exit 3; }
+ systemctl reset-failed danted.service >/dev/null 2>&1 || true
+ systemctl restart danted.service || true
+ echo "Checking local SOCKS readiness BEFORE rebuilding Backhaul ..."
+ READY=0
+ for attempt in $(seq 1 20);do
+   if systemctl is-active --quiet danted.service &&
+      curl -q -4 --noproxy "" --socks5-hostname 127.0.0.1:11080 \
+        --connect-timeout 2 --max-time 6 -fsS \
+        https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null |
+        grep -Fxq "ip=$BH_FOREIGN_IP";then
+     READY=1;break
+   fi
+   sleep 1
+ done
+ if [[ "$READY" != 1 ]];then
+   echo "STOP: Dante SOCKS still not serving verified egress."
+   systemctl status danted.service -l --no-pager || true
+   journalctl -u danted.service -n 25 --no-pager -o short-iso || true
+   echo "SOCKS_LISTENERS:"
+   ss -Hlnpt '( sport = :11080 )' || true
+   echo "No Backhaul client binary/config/service installed; old VPN untouched."
+   exit 4
+ fi
+ echo "DANTE_PARTIAL_INSTALL_RECOVERED: local SOCKS and foreign IP verified"
+else
+ echo "Preparing packages for foreign-only Dante and pinned Go build..."
+ export DEBIAN_FRONTEND=noninteractive
+ apt-get update
+ apt-get install -y ca-certificates curl python3 tar openssl git \
+                   dante-server iproute2
+ # Package postinstall might start a default Dante: stop ONLY the new service.
+ systemctl stop danted.service 2>/dev/null || true
+fi
 TMP="$(mktemp -d /root/.maya1-foreign.XXXXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 GOBIN=""
@@ -128,6 +197,7 @@ EXTDEV="$(ip -4 route get 1.1.1.1 |
 [[ "$EXTDEV" =~ ^[A-Za-z0-9_.:-]+$ ]] || {
  echo "STOP: network interface missing";exit 4;
 }
+if (( ! RESUME ));then
 cat >/etc/danted.conf <<EOF
 logoutput: syslog
 internal: 127.0.0.1 port = 11080
@@ -149,14 +219,27 @@ socks pass {
 EOF
 chmod 0640 /etc/danted.conf
 systemctl enable --now danted.service
-systemctl is-active --quiet danted.service || {
- echo "STOP: Dante local SOCKS not active";exit 4;
-}
-curl -q -4 --noproxy "" --socks5-hostname 127.0.0.1:11080 \
- --connect-timeout 5 --max-time 15 -fsS \
- https://www.cloudflare.com/cdn-cgi/trace | grep -Fx "ip=$BH_FOREIGN_IP" || {
- echo "STOP: foreign Dante did not egress from expected IP";exit 4;
-}
+fi
+# systemctl may report active before the SOCKS listener is initialized.
+READY=0
+for attempt in $(seq 1 20);do
+ if systemctl is-active --quiet danted.service &&
+    curl -q -4 --noproxy "" --socks5-hostname 127.0.0.1:11080 \
+       --connect-timeout 2 --max-time 6 -fsS \
+       https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null |
+       grep -Fxq "ip=$BH_FOREIGN_IP";then
+   READY=1;break
+ fi
+ sleep 1
+done
+if [[ "$READY" != 1 ]];then
+ echo "STOP: Dante SOCKS did not egress from expected IP after readiness wait"
+ systemctl status danted.service -l --no-pager || true
+ journalctl -u danted.service -n 25 --no-pager -o short-iso || true
+ ss -Hlnpt '( sport = :11080 )' || true
+ exit 4
+fi
+echo "DANTE_SOCKS_READY: 127.0.0.1:11080"
 # Verify actual public Maya1 TLS+WS endpoint BEFORE starting reverse transport.
 curl -q -4 --noproxy '*' --connect-timeout 5 --max-time 12 -fsS \
  "https://$BH_DOMAIN:$BH_TLS_PORT/" >/dev/null || {
