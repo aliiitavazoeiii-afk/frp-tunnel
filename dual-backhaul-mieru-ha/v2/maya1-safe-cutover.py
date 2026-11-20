@@ -114,7 +114,9 @@ def preflight_controller(file):
          "runtime_targets_match(" in text,"staged controller source identity invalid")
     call(["python3","-m","py_compile",str(file)],8)
     status=call(["python3",str(file),"--diagnose"],timeout=70)
-    d=json.loads(status.stdout.split("{",1)[1].rsplit("}",1)[0].join(["{","}"]))
+    start=status.stdout.find("{")
+    must(start>=0,"staged controller did not provide JSON diagnostics")
+    d=json.loads(status.stdout[start:])
     for role,(_,ip,_) in NEW.items():
         result=d[role]
         must(result["foreign_ip"]==ip and
