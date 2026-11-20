@@ -10,6 +10,8 @@ on:
       - 'dual-backhaul-mieru-ha/v2/maya1-safe-cutover.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-next-controller.py'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_controller_bulk.py'
+      - 'dual-backhaul-mieru-ha/v2/maya1-concurrency-canary.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya1_concurrency_canary.py'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_safe_cutover.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-dual-helper.py'
       - 'dual-backhaul-mieru-ha/v2/install-maya1-helper.sh'
@@ -36,6 +38,8 @@ jobs:
           python3 test_maya1_safe_cutover.py
           python3 -m py_compile test_maya1_controller_bulk.py
           python3 test_maya1_controller_bulk.py
+          python3 -m py_compile maya1-concurrency-canary.py test_maya1_concurrency_canary.py
+          python3 test_maya1_concurrency_canary.py
           python3 -m py_compile maya1-dual-helper.py test_maya1_dual_helper.py
           python3 test_maya1_dual_helper.py
           bash -n install-maya1-helper.sh
