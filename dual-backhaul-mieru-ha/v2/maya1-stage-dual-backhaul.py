@@ -41,15 +41,24 @@ def listening(port):
     try:return s.connect_ex(("127.0.0.1",port))==0
     finally:s.close()
 
-def netstat_ports():
-    r=cmd("ss","-Htan",check=True)
-    used=set()
-    for line in r.stdout.splitlines():
-        cols=line.split()
-        if len(cols)<4:continue
-        m=re.search(r":(\d+)$",cols[3])
-        if m:used.add(int(m.group(1)))
-    return used
+def stage_bind_conflicts():
+    """Check whether each intended listener can actually bind.
+
+    Do NOT search every ss TCP row: unrelated outbound connections frequently
+    use 19090/19092 as ephemeral local source ports and are NOT listeners.
+    This preflight binds each proposed endpoint briefly, without listen(),
+    accept(), service changes or any traffic disruption.
+    """
+    unavailable=set()
+    for foreign,tls,router,backhaul,socks in TARGETS.values():
+        for host,port in (("0.0.0.0",tls),("127.0.0.1",router),
+                          ("127.0.0.1",backhaul),("127.0.0.1",socks)):
+            with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as probe:
+                try:
+                    probe.bind((host,port))
+                except OSError:
+                    unavailable.add(port)
+    return unavailable
 
 def ensure_identity():
     must(os.geteuid()==0,"root required")
@@ -78,9 +87,8 @@ def ensure_identity():
     cmd("openssl","x509","-in",str(cert),"-noout","-checkend","604800")
     for x in ("/usr/sbin/haproxy","/usr/bin/stunnel"):
         must(Path(x).is_file(),x+" missing")
-    required={v for row in TARGETS.values() for v in row[1:]}
-    busy=netstat_ports()
-    must(not (required&busy),"new staging ports already occupied: "+str(required&busy))
+    busy=stage_bind_conflicts()
+    must(not busy,"new staging listener addresses cannot bind: "+str(sorted(busy)))
     for role in TARGETS:
         for service in services(role):
             must(not Path("/etc/systemd/system/"+service+".service").exists(),
