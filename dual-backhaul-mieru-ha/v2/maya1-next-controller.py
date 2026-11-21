@@ -321,7 +321,7 @@ def main():
                     "latency_average_s":last[2],
                     "consecutive_success":2 if confirmed_good else int(last_ok),
                     "consecutive_fail":2 if confirmed_bad else int(not last_ok),
-                    "warning": not last_ok,
+                    "warning": last[0] < 3,  # partial 2/3 success is warning, NEVER a drain
                     "confirmed_failure":confirmed_bad,
                     "confirmation_performed":should_confirm,
                     "bulk_verified":False,"bulk_pass":None,
