@@ -12,6 +12,8 @@ on:
       - 'dual-backhaul-mieru-ha/v2/maya1-emergency-refresh-helper.sh'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_emergency_stabilize.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-next-controller.py'
+      - 'dual-backhaul-mieru-ha/v2/install-maya-three-site-health-v3.sh'
+      - 'dual-backhaul-mieru-ha/v2/test_three_site_10min_v3.py'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_controller_bulk.py'
       - 'dual-backhaul-mieru-ha/v2/maya1-concurrency-canary.py'
       - 'dual-backhaul-mieru-ha/v2/test_maya1_concurrency_canary.py'
@@ -41,6 +43,9 @@ jobs:
           python3 test_maya1_safe_cutover.py
           python3 -m py_compile test_maya1_controller_bulk.py
           python3 test_maya1_controller_bulk.py
+          python3 -m py_compile test_three_site_10min_v3.py
+          python3 test_three_site_10min_v3.py
+          bash -n install-maya-three-site-health-v3.sh
           python3 -m py_compile maya1-concurrency-canary.py test_maya1_concurrency_canary.py
           python3 test_maya1_concurrency_canary.py
           python3 -m py_compile maya1-dual-helper.py test_maya1_dual_helper.py
