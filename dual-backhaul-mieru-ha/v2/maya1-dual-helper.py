@@ -61,7 +61,11 @@ def cache():
         d=json.loads(HEALTH.read_text())
         ts=datetime.fromisoformat(d["updated_utc"])
         age=(datetime.now(timezone.utc)-ts).total_seconds()
-        if age<0 or age>30 or d.get("policy")!="two-backhaul-bulk-v1":
+        policy=d.get("policy")
+        limit=780 if policy=="two-backhaul-3site-10m-v3" else 30
+        if age<0 or age>limit or policy not in ("two-backhaul-3site-10m-v3",
+                                               "two-backhaul-connectivity-v2",
+                                               "two-backhaul-bulk-v1"):
             return {},None
         return d.get("paths",{}),int(age)
     except (OSError,ValueError,TypeError,KeyError):
@@ -108,10 +112,15 @@ def status():
               (role.upper(),paint(ip,"cyan"),port,paint(result,color)))
         print("        active=%s total=%s weight=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
               (row.get("scur","?"),row.get("stot","?"),row.get("weight","?"),
-               item.get("passed_probes","?"),item.get("bulk_pass","not measured"),
+               item.get("passed_probes","?"),(item.get("bulk_pass") if item.get("bulk_pass") is not None else "not measured"),
                item.get("bulk_last",{}).get("bytes","?"),
                item.get("bulk_last",{}).get("speed_bps","?")))
+        details=item.get("https_checks",{})
+        if details:
+            fmt=lambda key: "OK" if details.get(key,{}).get("ok") is True else "FAIL"
+            print("        CHECKS: Google="+fmt("google")+" Cloudflare="+fmt("cloudflare")+" Apple="+fmt("apple"))
     print("  Health controller: "+("ACTIVE" if controller_active else "STOPPED (manual live routing)"))
+    print("  HTTPS targets: Google | Cloudflare | Apple; interval=600s")
     print("  Controller cache age: "+(str(age) if age is not None else "unverified")+"s")
     if not controller_active:
         print("  Note: live HAProxy UP does not imply independent HTTPS quality verified.")
