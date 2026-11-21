@@ -86,7 +86,7 @@ class TestMaya1Bulk(unittest.TestCase):
         self.assertIsNone(c.decision(True,False,4,0,0,True,
                                      peer_enabled=True,peer_short_ok=False))
         # Repair previously disabled lanes based on fresh HTTPS alone.
-        self.assertEqual(c.decision(False,True,0,3,3,False),
+        self.assertEqual(c.decision(False,True,0,3,2,False),
                          "enable")
         result["mieru"]=(1,False,.4,(False,{"reason":"timeout_or_transport_error"}))
         self.assertFalse(c.common_bulk_probe_outage(result,streaks))
