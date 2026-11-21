@@ -11,6 +11,7 @@ on:
       - 'dual-backhaul-mieru-ha/v2/test_dual_backhaul.py'
       - 'dual-backhaul-mieru-ha/v2/test_dual_color_helper.py'
       - 'dual-backhaul-mieru-ha/v2/maya3-connectivity-health-hotfix.sh'
+      - 'dual-backhaul-mieru-ha/v2/install-maya-three-site-health-v3.sh'
       - '.github/workflows/maya3-connectivity-health-hotfix.yml'
   workflow_dispatch:
 
@@ -25,6 +26,7 @@ jobs:
           cd dual-backhaul-mieru-ha/v2
           python3 -m py_compile dual-backhaul-controller.py dual_backhaul_menu.py test_dual_backhaul.py test_dual_color_helper.py
           bash -n maya3-connectivity-health-hotfix.sh
+          bash -n install-maya-three-site-health-v3.sh
           python3 test_dual_backhaul.py
           python3 test_dual_color_helper.py
           python3 test_three_site_10min_v3.py
