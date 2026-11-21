@@ -43,19 +43,26 @@ class ControllerChecks(unittest.TestCase):
         self.assertIn("unknown failure threshold", text)
         self.assertEqual(fake.sent, b"show stat\n")
 
-    def test_fail_closed_on_two_https_failures(self):
-        self.assertEqual(controller.decision(True, False, 2, 0, 0, True), "disable")
+    def test_sustained_real_https_failure_only_drain_with_healthy_peer(self):
+        self.assertIsNone(controller.decision(True,False,3,0,0,True,
+                                             peer_enabled=True,peer_short_ok=True))
+        self.assertEqual(controller.decision(True,False,4,0,0,True,
+                                             peer_enabled=True,peer_short_ok=True),"disable")
+        self.assertIsNone(controller.decision(True,False,5,0,0,True,
+                                             peer_enabled=False,peer_short_ok=False))
+        self.assertIsNone(controller.decision(True,False,5,0,0,True,
+                                             peer_enabled=True,peer_short_ok=False))
 
-    def test_fail_closed_on_two_bulk_failures_despite_good_https(self):
-        self.assertEqual(controller.decision(True, True, 0, 2, 0, True), "disable")
+    def test_bulk_failures_never_disable_an_up_backend(self):
+        for count in (1,2,3,100):
+            self.assertIsNone(controller.decision(True,True,0,count,0,True,
+                                 peer_enabled=True,peer_short_ok=True))
+        self.assertIsNone(controller.decision(True,True,0,100,0,False))
 
-    def test_do_not_disable_on_single_bulk_failure(self):
-        self.assertIsNone(controller.decision(True, True, 0, 1, 0, True))
-
-    def test_no_premature_reenable_without_bulk_verification(self):
-        self.assertIsNone(controller.decision(False, True, 0, 0, 10, False))
-        self.assertIsNone(controller.decision(False, True, 0, 0, 2, True))
-        self.assertEqual(controller.decision(False, True, 0, 0, 3, True), "enable")
+    def test_reenable_requires_three_rounds_https_not_bulk_success(self):
+        self.assertIsNone(controller.decision(False,True,0,10,2,False))
+        self.assertEqual(controller.decision(False,True,0,10,3,False),"enable")
+        self.assertIsNone(controller.decision(False,False,0,0,10,True))
 
     def test_validate_complete_bulk_transfer(self):
         good = SimpleNamespace(returncode=0, stdout="200 262144 1000000 0.5")
