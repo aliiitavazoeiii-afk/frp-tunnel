@@ -32,25 +32,27 @@ def paint(value, color):
     return (_COLORS[color] + str(value) + _RESET) if _COLOR else str(value)
 
 def lane_health(state, weight, info, age):
-    """green only for fresh end-to-end success; red for observed failure.
-    Unknown/stale/manual drain is amber, NEVER interpreted as filtered.
+    """UP/DOWN means LIVE HAProxy routing, not arbitrary download speed.
+
+    Low bulk throughput is an independent QUALITY warning displayed below.
+    A stopped controller or stale data changes assurance (amber), not the
+    factual HAProxy routing status. No service mutation in this helper.
     """
-    if age is None or age > 30 or not isinstance(info, dict):
+    live = str(state).upper()
+    if live in ("MAINT", "DOWN", "STOPPED"):
+        return "DOWN", "red"
+    if live not in ("UP", "OPEN"):
         return "UNKNOWN", "yellow"
-    passed = info.get("passed_probes")
-    bulk = info.get("bulk_pass")
-    available = info.get("available")
     try:
         enabled = int(weight) > 0
     except (ValueError, TypeError):
         enabled = False
-    if str(state).upper() not in ("UP", "OPEN") or available is False or (type(passed) is int and passed < 2):
-        return "DOWN", "red"
     if not enabled:
         return "DISABLED", "yellow"
-    if str(state).upper() == "UP" and available is True and type(passed) is int and passed >= 2 and bulk is True:
+    if (age is not None and 0 <= age <= 30 and isinstance(info,dict)
+            and info.get("passed_probes",0) >= 2):
         return "UP", "green"
-    return "UNKNOWN", "yellow"
+    return "UP", "yellow"
 
 def scp_with_fallback(src, dst, *, timeout=40):
     try:
@@ -97,6 +99,9 @@ def bh2():
 def status():
     active = roles()
     h, age = dual.health_cache()
+    controller_running = dual.status("dual-ha-v2-health") == "active"
+    if not controller_running:
+        h, age = {}, None
     backend = dual.haproxy_metrics()
     print("\n  DUAL BACKHAUL | MAYA3 | unchanged HAProxy leastconn")
     print("  ----------------------------------------------------------------")
@@ -121,7 +126,12 @@ def status():
                info.get("bulk_pass", "not measured"),
                info.get("bulk_last", {}).get("bytes", "?"),
                info.get("bulk_last", {}).get("speed_bps", "?")))
-    print("  Controller cache age: " + str(age) + "s")
+    print("  Controller: " + ("ACTIVE" if controller_running else "STOPPED (manual routing)"))
+    print("  Controller cache age: " + (str(age)+"s" if age is not None else "unverified"))
+    if not controller_running:
+        print("  NOTICE: HAProxy UP routes traffic, but automated health is paused.")
+    else:
+        print("  BULK download is a QUALITY indicator, not a tunnel cutoff.")
     print("  ----------------------------------------------------------------")
     print("  NOTE: HAProxy's backend identifier 'mieru' now means BACKHAUL2.")
     print("  Original Mieru client package is not required for this mode.")
