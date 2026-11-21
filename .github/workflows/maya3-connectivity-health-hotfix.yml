@@ -1,0 +1,53 @@
+name: Maya3 connectivity-only HA emergency safety
+on:
+  push:
+    branches: [dual-backhaul]
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/dual-backhaul-controller.py'
+      - 'dual-backhaul-mieru-ha/v2/dual_backhaul_menu.py'
+      - 'dual-backhaul-mieru-ha/v2/test_dual_backhaul.py'
+      - 'dual-backhaul-mieru-ha/v2/test_dual_color_helper.py'
+      - 'dual-backhaul-mieru-ha/v2/maya3-connectivity-health-hotfix.sh'
+      - '.github/workflows/maya3-connectivity-health-hotfix.yml'
+  workflow_dispatch:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile, shell syntax, and failover safety regressions
+        run: |
+          set -euo pipefail
+          cd dual-backhaul-mieru-ha/v2
+          python3 -m py_compile dual-backhaul-controller.py dual_backhaul_menu.py test_dual_backhaul.py test_dual_color_helper.py
+          bash -n maya3-connectivity-health-hotfix.sh
+          python3 test_dual_backhaul.py
+          python3 test_dual_color_helper.py
+      - name: Prohibit speed-only drains and any transit restart from hotfix
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          p=Path("dual-backhaul-mieru-ha/v2/dual-backhaul-controller.py")
+          spec=importlib.util.spec_from_file_location("maya3_ctl",p)
+          c=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(c)
+          assert c.PATHS=={"backhaul":21001,"mieru":21002}
+          assert c.decision(True,True,0,100,0,True,
+                            peer_enabled=True,peer_short_ok=True) is None
+          assert c.decision(True,False,4,0,0,True,
+                            peer_enabled=True,peer_short_ok=True)=="disable"
+          assert c.decision(True,False,4,0,0,True,
+                            peer_enabled=False,peer_short_ok=False) is None
+          assert c.decision(False,True,0,4,3,False)=="enable"
+          s=Path("dual-backhaul-mieru-ha/v2/maya3-connectivity-health-hotfix.sh").read_text()
+          assert 'systemctl enable --now "$SERVICE"' in s
+          for action in ("systemctl restart dual-ha-v2-gateway",
+                         "systemctl restart x-ui","systemctl restart dual-ha-backhaul",
+                         "systemctl restart dual-ha-bh2-server",
+                         "iptables -F","docker compose down"):
+              assert action not in s
+          print("MAYA3_HEALTH_SAFE_FAILOVER_POLICY=PASS")
+          PY
