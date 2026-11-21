@@ -28,6 +28,21 @@ esac
 }
 systemctl is-active --quiet x-ui
 systemctl is-active --quiet dual-ha-v2-gateway
+# Maya1 must also have persistent startup-enabled backend definitions.
+# A runtime-only 'enable server' is lost if HAProxy restarts.
+if [[ "$NODE" == maya1 ]];then
+  grep -Fq 'server backhaul 127.0.0.1:21101 check' /etc/dual-ha/v2/haproxy.cfg || {
+    echo "STOP: Maya1 HAProxy config does not persist staged Backhaul1";exit 3;
+  }
+  grep -Fq 'server mieru 127.0.0.1:21102 check' /etc/dual-ha/v2/haproxy.cfg || {
+    echo "STOP: Maya1 HAProxy config does not persist staged Backhaul2";exit 3;
+  }
+  if grep -Eq 'server (backhaul|mieru) 127[.]0[.]0[.]1:2110[12] check disabled' /etc/dual-ha/v2/haproxy.cfg;then
+    echo "STOP: Maya1 HAProxy disk config still has disabled backends."
+    echo "Run previously prepared Maya1 emergency persistence script first."
+    exit 3
+  fi
+fi
 [[ "$(systemctl show -p ExecStart --value "$UNIT")" == *"$CTRL"* ]] || {
  echo "STOP: unexpected controller unit ExecStart";exit 3;
 }
@@ -99,6 +114,7 @@ mkdir -p -m 0700 "$BACKUP"
 cp -a "$CTRL" "$BACKUP/ctrl.old"
 cp -a "$HELPER" "$BACKUP/helper.old"
 echo "BACKUP=$BACKUP"
+CHANGED=1
 systemctl stop "$UNIT"
 install -o root -g root -m 0600 "$TMP/controller.py" "$CTRL.v3-next"
 install -o root -g root -m 0700 "$TMP/helper.py" "$HELPER.v3-next"
