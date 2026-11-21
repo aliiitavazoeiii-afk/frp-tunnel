@@ -34,11 +34,16 @@ BULK_ATTEMPTS = 3
 BULK_REQUIRED_PASSES = 2
 BULK_MAX_SECONDS = 12
 BULK_MAX_TTFB = 8
-SLEEP_SECONDS = 8
+# Three independent HTTPS destinations per lane, every ten minutes.
+# On a suspicious result, confirm again after 20 seconds before changing routing.
+CHECK_PERIOD = 600
+CONFIRM_DELAY = 20
+POLICY = "two-backhaul-3site-10m-v3"
+SLEEP_SECONDS = 8  # legacy constant; v3 scheduling uses CHECK_PERIOD
 MIN_BULK_BYTES_PER_SECOND = 96 * 1024
-SHORT_FALL = 4  # Four consecutive independent 2-of-3 HTTPS probe failures
+SHORT_FALL = 2  # confirmation rounds, NOT a speed threshold
 BULK_FALL = 2  # Diagnostic counter only; NEVER disables routing
-RISE = 3
+RISE = 2  # confirmation rounds for an administratively disabled lane
 
 def api(command):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -194,11 +199,10 @@ def bulk_probe(port):
 
 def decision(enabled, short_ok, short_bad, bulk_bad, good, verified,
              peer_enabled=False, peer_short_ok=False):
-    """Only genuine connectivity failure may drain a route.
+    """Only two confirmed independent HTTPS rounds can alter routing.
 
-    Bulk throughput is advisory and NEVER a reason for HAProxy MAINT.
-    Keep at least one known-working backend enabled. Re-enable on sustained
-    independent HTTPS success without waiting for a speed benchmark.
+    The bulk/throughput parameters are intentionally ignored. If both paths
+    are unwell, preserve the current HAProxy routing to avoid dual MAINT.
     """
     if not enabled and short_ok and good >= RISE:
         return "enable"
@@ -206,6 +210,39 @@ def decision(enabled, short_ok, short_bad, bulk_bad, good, verified,
             and peer_enabled and peer_short_ok):
         return "disable"
     return None
+
+def is_enabled(row):
+    """Source of truth is HAProxy live status and positive server weight."""
+    try:
+        return str(row["status"]).startswith("UP") and int(row["weight"]) > 0
+    except (ValueError,TypeError,KeyError):
+        return False
+
+def three_site_probe(port, expected):
+    """Probe Google, Cloudflare and Apple concurrently; return individual results.
+
+    Do not fetch any bulk data. 2 successes out of 3 count as working; 0-1
+    successes trigger a confirmation round, never an immediate drain.
+    """
+    labels=("google","cloudflare","apple")
+    def check(index):
+        url,code=TARGETS[index]
+        began=time.monotonic()
+        if index == 1:
+            result=curl(port,url,timeout=12)
+            good=bool(result and result.returncode==0 and
+                      "ip="+expected in result.stdout.splitlines())
+        else:
+            result=curl(port,url,["-o","/dev/null","-w","%{http_code}"],timeout=12)
+            good=bool(result and result.returncode==0 and result.stdout.strip()==code)
+        return labels[index],good,round(time.monotonic()-began,3)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        measurements=list(pool.map(check,range(3)))
+    successes=sum(1 for _,ok,_ in measurements if ok)
+    timings=[t for _,ok,t in measurements if ok]
+    avg=round(sum(timings)/len(timings),3) if timings else None
+    return successes, successes>=2, avg, {k:{"ok":ok,"elapsed_s":t}
+            for k,ok,t in measurements}
 
 def common_bulk_probe_outage(results, streaks):
     """A shared download-test outage must not administratively drain both paths
@@ -229,81 +266,93 @@ def write(data):
     os.replace(temp, path)
 
 def main():
-    streak = {k: {"short_bad": 0, "bulk_bad": 0, "good": 0,
-                  "verified": False, "last_bulk": -1e20,
-                  "bulk_ok": False, "bulk": {"reason": "not_yet_measured"}}
-              for k in PATHS}
-    print("MAYA1_DUAL_BACKHAUL_CONTROLLER: active; original HAProxy leastconn unchanged", flush=True)
+    print("MAYA1_THREE_SITE_10MIN_CONTROLLER: live; bulk never drains routes",flush=True)
     while True:
-        started = time.monotonic()
+        started=time.monotonic()
         try:
-            before = states()
-            if not all(expected_ip(k) for k in PATHS):
-                raise ValueError("Expected Backhaul IPs absent; refusing control actions")
+            before=states()
+            identity={r:expected_ip(r) for r in PATHS}
+            if not all(identity.values()):
+                raise ValueError("Missing expected Backhaul egress identities; no actions")
             if not runtime_targets_match(before):
-                raise ValueError("HAProxy endpoints do not match Maya1 staging; refusing control actions")
-            now = time.monotonic()
-            def inspect(role):
-                d = streak[role]
-                passed, short_ok, latency = short_probe(PATHS[role], expected_ip(role))
-                due = now - d["last_bulk"] >= BULK_PERIOD
-                bulk = bulk_probe(PATHS[role]) if due else None
-                return passed, short_ok, latency, bulk
+                raise ValueError("Maya1 HAProxy endpoints do not match staged 21101/21102")
+            def sample(role):
+                return three_site_probe(PATHS[role],identity[role])
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                results = dict(zip(PATHS, pool.map(inspect, PATHS)))
-            report = {}
-            shared_bulk_failure = common_bulk_probe_outage(results, streak)
-            if shared_bulk_failure:
-                print("BULK SHARED-ORIGIN WARNING: both HTTPS paths pass; "
-                      "reporting quality only, never draining routes for bulk", flush=True)
-            for role, state in results.items():
-                passed, short_ok, latency, bulk = state
-                d = streak[role]
-                d["short_bad"] = 0 if short_ok else d["short_bad"] + 1
-                if bulk is not None:
-                    d["last_bulk"] = now
-                    d["bulk_ok"], d["bulk"] = bulk
-                    d["verified"] = True
-                    d["bulk_bad"] = 0 if d["bulk_ok"] else d["bulk_bad"] + 1
-                # Recover solely on independently verified connectivity.
-                # A slow speed.cloudflare.com response must not disable service.
-                d["good"] = d["good"] + 1 if short_ok else 0
-                current = before[role]["status"]
-                up = current == "UP"
-                peer = next(other for other in PATHS if other != role)
-                peer_row = before[peer]
-                peer_up = peer_row["status"] == "UP" and str(peer_row["weight"]) not in ("0", "0/0")
-                peer_short_ok = results[peer][1] is True
-                action = decision(up, short_ok, d["short_bad"], d["bulk_bad"],
-                                  d["good"], d["verified"],
-                                  peer_enabled=peer_up,
-                                  peer_short_ok=peer_short_ok)
+                first=dict(zip(PATHS,pool.map(sample,PATHS)))
+
+            # Recheck BOTH lanes only if a lane looks unhealthy or is drained.
+            # Avoid treating two checks seconds apart as independent on success.
+            should_confirm=any(not first[r][1] or not is_enabled(before[r])
+                               for r in PATHS)
+            second=first
+            if should_confirm:
+                time.sleep(CONFIRM_DELAY)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    second=dict(zip(PATHS,pool.map(sample,PATHS)))
+
+            report={}
+            for role in PATHS:
+                peer=next(k for k in PATHS if k!=role)
+                enabled=is_enabled(before[role])
+                first_ok=first[role][1]
+                last=second[role]
+                last_ok=last[1]
+                # Two *real* rounds required for a routing decision.
+                confirmed_bad=(should_confirm and not first_ok and not last_ok)
+                confirmed_good=(should_confirm and first_ok and last_ok)
+                peer_good=(first[peer][1] and second[peer][1])
+                action=decision(enabled,last_ok,2 if confirmed_bad else 0,0,
+                                2 if confirmed_good else 0,True,
+                                peer_enabled=is_enabled(before[peer]),
+                                peer_short_ok=peer_good)
                 if action:
-                    api(action + " server dual_egress/" + role)
-                    up = action == "enable"
-                    print(role + " -> " + action.upper() +
-                          " | short=" + str(passed) + "/3" +
-                          " | bulk=" + str(d["bulk"]), flush=True)
-                report[role] = {
-                    "available": up, "routing_enabled": up,
-                    "connectivity_healthy": short_ok,
-                    "quality_warning": bool(d["verified"] and not d["bulk_ok"]),
-                    "passed_probes": passed, "total_probes": 3,
-                    "latency_average_s": latency, "consecutive_success": d["good"],
-                    "consecutive_fail": d["short_bad"],
-                    "bulk_verified": d["verified"], "bulk_pass": d["bulk_ok"],
-                    "shared_bulk_probe_outage": shared_bulk_failure,
-                    "bulk_fail_streak": d["bulk_bad"],
-                    "bulk_last": d["bulk"], "actual_role": "backhaul2" if role == "mieru" else "backhaul1",
-                    "expected_foreign_ip": expected_ip(role),
-                    "haproxy_before_action": current, "weight": before[role]["weight"],
+                    api(action+" server dual_egress/"+role)
+                    print(role+" -> "+action.upper()+
+                          " | confirmed HTTPS "+str(first[role][0])+"/3 and "+
+                          str(last[0])+"/3 | peer="+str(peer_good),flush=True)
+                # Read back actual routing after control action, not presumed state.
+                report[role]={
+                    "available": enabled if not action else action=="enable",
+                    "routing_enabled": enabled if not action else action=="enable",
+                    "connectivity_healthy": last_ok,
+                    "passed_probes": last[0],"total_probes":3,
+                    "https_checks": last[3],
+                    "latency_average_s":last[2],
+                    "consecutive_success":2 if confirmed_good else int(last_ok),
+                    "consecutive_fail":2 if confirmed_bad else int(not last_ok),
+                    "warning": not last_ok,
+                    "confirmed_failure":confirmed_bad,
+                    "confirmation_performed":should_confirm,
+                    "bulk_verified":False,"bulk_pass":None,
+                    "bulk_fail_streak":0,
+                    "bulk_last":{"reason":"not_used_by_v3"},
+                    "quality_warning":False,
+                    "actual_role":"backhaul2" if role=="mieru" else "backhaul1",
+                    "expected_foreign_ip":identity[role],
+                    "haproxy_before_action":before[role]["status"],
+                    "weight":before[role]["weight"],
                 }
-            write({"updated_utc": datetime.now(timezone.utc).isoformat(),
-                   "policy": "two-backhaul-connectivity-v2", "paths": report})
+            after=states()
+            for role in PATHS:
+                report[role]["available"]=is_enabled(after[role])
+                report[role]["routing_enabled"]=is_enabled(after[role])
+                report[role]["haproxy_after_action"]=after[role]["status"]
+            write({"updated_utc":datetime.now(timezone.utc).isoformat(),
+                   "policy":POLICY,
+                   "check_interval_s":CHECK_PERIOD,
+                   "confirm_delay_s":CONFIRM_DELAY,
+                   "targets":["Google","Cloudflare","Apple"],
+                   "paths":report})
+            print("THREE_SITE_CHECK",node if False else "MAYA1",
+                  "first="+str({r:first[r][0] for r in PATHS}),
+                  "last="+str({r:second[r][0] for r in PATHS}),
+                  "live="+str({r:after[r]["status"] for r in PATHS}),flush=True)
         except Exception as e:
-            print("HEALTH WARNING (no HAProxy action): " +
-                  type(e).__name__ + ": " + str(e)[:260], flush=True)
-        time.sleep(max(1, SLEEP_SECONDS - (time.monotonic() - started)))
+            print("HEALTH WARNING (no further HAProxy action): "+
+                  type(e).__name__+": "+str(e)[:260],flush=True)
+        time.sleep(max(1,CHECK_PERIOD-(time.monotonic()-started)))
+
 
 def diagnose():
     """Read-only preview. Do not send enable/disable commands to production HAProxy."""
@@ -316,15 +365,14 @@ def diagnose():
             ip = expected_ip(role)
             if not ip:
                 raise RuntimeError("Missing expected foreign IP for " + role)
-            passed, ok, avg = short_probe(port, ip)
-            bulk_ok, bulk = bulk_probe(port)
+            passed, ok, avg, sites = three_site_probe(port, ip)
             results[role] = {
                 "foreign_ip": ip, "http_probes": passed, "https_healthy": ok,
-                "latency_s": avg, "bulk_ok": bulk_ok, "bulk": bulk,
+                "latency_s": avg, "sites": sites,
                 "haproxy_state": live[role]
             }
         print(json.dumps(results, indent=2), flush=True)
-        if not all(results[r]["https_healthy"] and results[r]["bulk_ok"] for r in PATHS):
+        if not all(results[r]["https_healthy"] for r in PATHS):
             raise RuntimeError("One or more paths failed read-only probe")
         return 0
     except Exception as e:
