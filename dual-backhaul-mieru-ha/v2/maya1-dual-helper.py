@@ -82,7 +82,7 @@ def status_label(row,info,age,ip,port,controller_active=True):
     live=row.get("status")
     if live in ("MAINT","DOWN","STOPPED"):
         return "DOWN","red"
-    if live!="UP":return "UNKNOWN","amber"
+    if not str(live).startswith("UP"):return "UNKNOWN","amber"
     try:enabled=int(row.get("weight","0"))>0
     except (ValueError,TypeError):enabled=False
     if not enabled:return "DISABLED","amber"
@@ -125,7 +125,7 @@ def status():
     if not controller_active:
         print("  Note: live HAProxy UP does not imply independent HTTPS quality verified.")
     else:
-        print("  Slow BULK transfer is advisory; live HAProxy routing state shown above.")
+        print("  Scheduled bulk speed test OFF; 3-site HTTPS is the only routing gate.")
     print("  ---------------------------------------------------------------")
     print("  Historical backend name 'mieru' actually carries BACKHAUL2.")
     print("  Legacy rollback endpoints must be separately verified before use.")
