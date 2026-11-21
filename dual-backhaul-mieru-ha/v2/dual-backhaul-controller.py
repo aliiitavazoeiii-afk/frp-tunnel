@@ -285,7 +285,7 @@ def main():
                    "confirm_delay_s":CONFIRM_DELAY,
                    "targets":["Google","Cloudflare","Apple"],
                    "paths":report})
-            print("THREE_SITE_CHECK",node if False else "MAYA3",
+            print("THREE_SITE_CHECK MAYA3",
                   "first="+str({r:first[r][0] for r in PATHS}),
                   "last="+str({r:second[r][0] for r in PATHS}),
                   "live="+str({r:after[r]["status"] for r in PATHS}),flush=True)
