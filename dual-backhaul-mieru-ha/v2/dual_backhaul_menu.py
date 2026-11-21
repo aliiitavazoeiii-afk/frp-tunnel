@@ -41,7 +41,7 @@ def lane_health(state, weight, info, age):
     live = str(state).upper()
     if live in ("MAINT", "DOWN", "STOPPED"):
         return "DOWN", "red"
-    if live not in ("UP", "OPEN"):
+    if not (live.startswith("UP") or live=="OPEN"):
         return "UNKNOWN", "yellow"
     try:
         enabled = int(weight) > 0
@@ -136,7 +136,7 @@ def status():
     if not controller_running:
         print("  NOTICE: HAProxy UP routes traffic, but automated health is paused.")
     else:
-        print("  BULK download is a QUALITY indicator, not a tunnel cutoff.")
+        print("  Scheduled bulk speed test OFF; 3-site HTTPS is the only routing gate.")
     print("  ----------------------------------------------------------------")
     print("  NOTE: HAProxy's backend identifier 'mieru' now means BACKHAUL2.")
     print("  Original Mieru client package is not required for this mode.")
