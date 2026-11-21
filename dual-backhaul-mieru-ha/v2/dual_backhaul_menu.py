@@ -49,7 +49,7 @@ def lane_health(state, weight, info, age):
         enabled = False
     if not enabled:
         return "DISABLED", "yellow"
-    if (age is not None and 0 <= age <= 30 and isinstance(info,dict)
+    if (age is not None and 0 <= age <= 780 and isinstance(info,dict)
             and info.get("passed_probes",0) >= 2):
         return "UP", "green"
     return "UP", "yellow"
@@ -123,10 +123,15 @@ def status():
         print("        active=%s total=%s weight=%s | HTTPS=%s/3 | BULK=%s | bytes=%s speed=%s B/s" %
               (stats.get("current", "?"), stats.get("total", "?"), weight,
                info.get("passed_probes", "?"),
-               info.get("bulk_pass", "not measured"),
+               (info.get("bulk_pass") if info.get("bulk_pass") is not None else "not measured"),
                info.get("bulk_last", {}).get("bytes", "?"),
                info.get("bulk_last", {}).get("speed_bps", "?")))
+        checks=info.get("https_checks",{})
+        if checks:
+            label=lambda key: "OK" if checks.get(key,{}).get("ok") is True else "FAIL"
+            print("        CHECKS: Google="+label("google")+" Cloudflare="+label("cloudflare")+" Apple="+label("apple"))
     print("  Controller: " + ("ACTIVE" if controller_running else "STOPPED (manual routing)"))
+    print("  HTTPS targets: Google | Cloudflare | Apple; interval=600s")
     print("  Controller cache age: " + (str(age)+"s" if age is not None else "unverified"))
     if not controller_running:
         print("  NOTICE: HAProxy UP routes traffic, but automated health is paused.")
