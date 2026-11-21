@@ -10,6 +10,12 @@ class Tests(unittest.TestCase):
     def test_fresh_success_is_green(self):
         info={"available":True,"passed_probes":3,"bulk_pass":True}
         self.assertEqual(m.lane_health("UP","1",info,2),("UP","green"))
+    def test_speed_failure_stays_up_when_haproxy_up(self):
+        slow={"available":True,"passed_probes":3,"bulk_pass":False}
+        self.assertEqual(m.lane_health("UP",1,slow,6),("UP","green"))
+        self.assertEqual(m.lane_health("UP",1,{"available":False,"passed_probes":3,"bulk_pass":False},6),("UP","green"))
+        self.assertEqual(m.lane_health("UP",1,slow,None),("UP","yellow"))
+
     def test_down_is_red_but_not_claimed_filtered(self):
         self.assertEqual(m.lane_health("DOWN","0",{"available":False,"passed_probes":0},2),
                          ("DOWN","red"))
