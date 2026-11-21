@@ -44,13 +44,13 @@ class ControllerChecks(unittest.TestCase):
         self.assertEqual(fake.sent, b"show stat\n")
 
     def test_sustained_real_https_failure_only_drain_with_healthy_peer(self):
-        self.assertIsNone(controller.decision(True,False,3,0,0,True,
+        self.assertIsNone(controller.decision(True,False,1,0,0,True,
                                              peer_enabled=True,peer_short_ok=True))
-        self.assertEqual(controller.decision(True,False,4,0,0,True,
+        self.assertEqual(controller.decision(True,False,2,0,0,True,
                                              peer_enabled=True,peer_short_ok=True),"disable")
-        self.assertIsNone(controller.decision(True,False,5,0,0,True,
+        self.assertIsNone(controller.decision(True,False,3,0,0,True,
                                              peer_enabled=False,peer_short_ok=False))
-        self.assertIsNone(controller.decision(True,False,5,0,0,True,
+        self.assertIsNone(controller.decision(True,False,3,0,0,True,
                                              peer_enabled=True,peer_short_ok=False))
 
     def test_bulk_failures_never_disable_an_up_backend(self):
@@ -60,8 +60,8 @@ class ControllerChecks(unittest.TestCase):
         self.assertIsNone(controller.decision(True,True,0,100,0,False))
 
     def test_reenable_requires_three_rounds_https_not_bulk_success(self):
-        self.assertIsNone(controller.decision(False,True,0,10,2,False))
-        self.assertEqual(controller.decision(False,True,0,10,3,False),"enable")
+        self.assertIsNone(controller.decision(False,True,0,10,1,False))
+        self.assertEqual(controller.decision(False,True,0,10,2,False),"enable")
         self.assertIsNone(controller.decision(False,False,0,0,10,True))
 
     def test_validate_complete_bulk_transfer(self):
