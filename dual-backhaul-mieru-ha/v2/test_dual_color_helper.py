@@ -21,7 +21,7 @@ class Tests(unittest.TestCase):
                          ("DOWN","red"))
     def test_stale_and_manual_drained_not_false_green(self):
         valid={"available":True,"passed_probes":3,"bulk_pass":True}
-        self.assertEqual(m.lane_health("UP",1,valid,45)[1],"yellow")
+        self.assertEqual(m.lane_health("UP",1,valid,781)[1],"yellow")
         self.assertEqual(m.lane_health("UP",0,valid,2),("DISABLED","yellow"))
         self.assertEqual(m.lane_health("UP",1,{},2)[1],"yellow")
     def test_terminal_only_color(self):
