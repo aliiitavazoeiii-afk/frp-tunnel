@@ -96,9 +96,9 @@ def new_config(src):
     guard(found=={"backhaul":1,"mieru":1},"missing expected HAProxy backend definitions")
     return "".join(results)
 
-def verify_backhaul():
+def verify_backhaul(port=PORT_BH):
     r=command(["curl","-q","-4","--noproxy","","--socks5-hostname",
-        "127.0.0.1:21001","--connect-timeout","5","--max-time","18",
+        "127.0.0.1:"+str(port),"--connect-timeout","5","--max-time","18",
         "--fail","--silent","--show-error",
         "https://www.cloudflare.com/cdn-cgi/trace"],timeout=21)
     guard(r.returncode==0,"Backhaul HTTPS Cloudflare canary failed (no routing changed)")
@@ -125,7 +125,7 @@ def verify_identity():
     print("LIVE_BACKHAUL",bh["status"],"active="+bh.get("scur","?"),flush=True)
     print("LIVE_MIERU",rows["mieru"].get("status"),
           "active="+rows["mieru"].get("scur","?"),flush=True)
-    verify_backhaul()
+    expected_egress=verify_backhaul()
     orig=CFG.read_text()
     target=new_config(orig)
     with tempfile.TemporaryDirectory(prefix="maya4-haproxy-validate-",dir="/root") as td:
@@ -134,7 +134,7 @@ def verify_identity():
         r=command(["/usr/sbin/haproxy","-c","-f",str(candidate)],timeout=20)
         guard(r.returncode==0,"HAProxy config validation failed: "+r.stderr[-200:])
     print("PERSISTENT_BACKHAUL_ONLY_CONFIG_VALID",flush=True)
-    return orig,target,rows
+    return orig,target,rows,expected_egress
 
 def save_config(src):
     st=CFG.stat()
@@ -150,7 +150,7 @@ def save_config(src):
     finally:
         if os.path.exists(path):os.unlink(path)
 
-def apply(orig,target,before):
+def apply(orig,target,before,expected_egress):
     was_running=system("is-active","--quiet",CONTROLLER).returncode==0
     enabled=system("is-enabled",CONTROLLER).stdout.strip()
     print("CONTROLLER_BEFORE", "active" if was_running else "inactive",
@@ -166,9 +166,9 @@ def apply(orig,target,before):
     changes=False
     try:
         # Do this before draining, otherwise the old health service might reenable.
+        changes=True
         r=system("disable","--now",CONTROLLER)
         guard(r.returncode==0,"unable to disable old controller "+r.stderr[-140:])
-        changes=True
         # Persist prior to live switch, without reload or restart.
         if target!=orig:save_config(target)
         haproxy("set server dual_egress/mieru state drain")
@@ -178,6 +178,9 @@ def apply(orig,target,before):
               "Backhaul unexpectedly unavailable after draining Mieru")
         guard(after["mieru"]["status"].startswith(("DRAIN","NOLB")),
               "Mieru drain state was not confirmed: "+after["mieru"]["status"])
+        gateway_egress=verify_backhaul(18080)
+        guard(gateway_egress==expected_egress,
+              "Gateway egress does not match verified Backhaul-only path")
         guard(system("is-active","--quiet",CONTROLLER).returncode!=0,
               "health controller reactivated")
         print("MAYA4_BACKHAUL_ONLY_LIVE",flush=True)
@@ -209,12 +212,12 @@ def apply(orig,target,before):
 def main():
     guard(len(sys.argv)==2 and sys.argv[1] in ("--check","--apply"),
           "Usage: sudo python3 maya4-backhaul-only-safe.py --check|--apply")
-    orig,target,rows=verify_identity()
+    orig,target,rows,expected_egress=verify_identity()
     if sys.argv[1]=="--check":
         print("MAYA4_BACKHAUL_ONLY_PREFLIGHT_PASS")
         print("NO_CHANGES_MADE=TRUE")
         return
-    apply(orig,target,rows)
+    apply(orig,target,rows,expected_egress)
 
 if __name__=="__main__":
     try:main()
