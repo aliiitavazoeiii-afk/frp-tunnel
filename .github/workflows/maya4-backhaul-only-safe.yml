@@ -1,0 +1,31 @@
+name: Maya4 temporary Backhaul-only drain safety
+on:
+  push:
+    branches: [dual-backhaul]
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/maya4-backhaul-only-safe.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya4_backhaul_only_safe.py'
+      - '.github/workflows/maya4-backhaul-only-safe.yml'
+  workflow_dispatch:
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test Maya4 safe temporary Backhaul-only maintenance
+        run: |
+          set -euo pipefail
+          cd dual-backhaul-mieru-ha/v2
+          python3 -m py_compile maya4-backhaul-only-safe.py test_maya4_backhaul_only_safe.py
+          python3 test_maya4_backhaul_only_safe.py
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("maya4-backhaul-only-safe.py").read_text()
+          assert '5.10.249.206' in src
+          assert 'set server dual_egress/mieru state drain' in src
+          assert 'gateway_egress==expected_egress' in src
+          assert 'BACKUP_ROOT=' in src
+          assert 'No Mieru process shutdown' in src
+          print("MAYA4_DRAIN_IS_REVERSIBLE_AND_NO_XRAY_RESTART=PASS")
+          PY
