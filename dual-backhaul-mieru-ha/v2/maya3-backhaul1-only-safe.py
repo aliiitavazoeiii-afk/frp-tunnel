@@ -115,9 +115,9 @@ def verify_identity():
     guard(os.geteuid()==0,"must run as root")
     guard(BUNDLE.is_file() and not BUNDLE.is_symlink(),"Backhaul bundle missing")
     src=BUNDLE.read_text()
-    guard(re.search(r"(?m)^BH_IRAN_IP='5\.10\.249\.206'$",src),
+    guard(re.search(r"(?m)^BH_IRAN_IP='185\.215\.230\.221'$",src),
           "THIS IS NOT MAYA3 (expected 185.215.230.221)")
-    guard(re.search(r"(?m)^BH_FOREIGN_IP='152\\.237\\.230\\.140'$",src),
+    guard(re.search(r"(?m)^BH_FOREIGN_IP='152\.237\.230\.140'$",src),
           "Maya3 Backhaul1 configured foreign IP mismatch")
     guard(BH2_STATE.is_file() and not BH2_STATE.is_symlink(),
           "Maya3 Backhaul2 identity file missing")
@@ -131,13 +131,33 @@ def verify_identity():
                 "dual-ha-v2-gateway.service","x-ui.service"):
         guard(system("is-active","--quiet",svc).returncode==0,
               "required service not active "+svc)
+    # The V3 controller would automatically re-enable Backhaul2 if left running.
+    # Require known-good V3 policy before making an intentional single-lane change.
+    import json
+    from datetime import datetime, timezone
+    health_file=Path("/run/dual-ha-v2/health.json")
+    guard(health_file.is_file() and not health_file.is_symlink(),
+          "V3 health cache not found")
+    health=json.loads(health_file.read_text())
+    guard(health.get("policy")=="two-backhaul-3site-10m-v3" and
+          health.get("check_interval_s")==600,
+          "unexpected health controller policy; refusing to disable")
+    guard(system("is-active","--quiet",CONTROLLER).returncode==0,
+          "V3 controller is not active")
+    measured=datetime.fromisoformat(health["updated_utc"])
+    age=(datetime.now(timezone.utc)-measured).total_seconds()
+    guard(0<=age<780,"V3 health cache stale or future-dated")
+    guard(health["paths"]["backhaul"].get("passed_probes",0)>=2,
+          "Backhaul1 V3 HTTPS health not confirmed")
+    print("V3_BACKHAUL1_HEALTH_CONFIRMED","age_seconds="+str(int(age)),
+          "https="+str(health["paths"]["backhaul"].get("passed_probes"))+"/3")
     guard(CFG.is_file() and not CFG.is_symlink(),"HAProxy config missing")
     rows=states()
     bh=rows["backhaul"]
     guard(bh["status"].startswith("UP") and int(bh.get("weight","0"))>0,
           "Backhaul must be UP with positive weight")
     print("LIVE_BACKHAUL",bh["status"],"active="+bh.get("scur","?"),flush=True)
-    print("LIVE_MIERU",rows["mieru"].get("status"),
+    print("LIVE_BACKHAUL2",rows["mieru"].get("status"),
           "active="+rows["mieru"].get("scur","?"),flush=True)
     expected_egress=verify_backhaul()
     guard(expected_egress==BH1_IP,
@@ -202,7 +222,7 @@ def apply(orig,target,before,expected_egress):
         print("MAYA3_BACKHAUL_ONLY_LIVE",flush=True)
         print("BACKHAUL",after["backhaul"]["status"],
               "active="+after["backhaul"].get("scur","?"),flush=True)
-        print("MIERU",after["mieru"]["status"],
+        print("BACKHAUL2",after["mieru"]["status"],
               "active="+after["mieru"].get("scur","?"),flush=True)
         print("NEW_CONNECTIONS_VIA_BACKHAUL_ONLY=TRUE")
         print("BACKHAUL2_PROCESS_LEFT_RUNNING_FOR_EXISTING_SESSIONS=TRUE")
