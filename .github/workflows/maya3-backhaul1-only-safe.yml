@@ -1,0 +1,30 @@
+name: Maya3 Backhaul1-only safe drain
+on:
+  push:
+    branches: [dual-backhaul]
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/maya3-backhaul1-only-safe.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya3_backhaul1_only_safe.py'
+      - '.github/workflows/maya3-backhaul1-only-safe.yml'
+  workflow_dispatch:
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python offline one-lane routing tests
+        run: |
+          set -euo pipefail
+          cd dual-backhaul-mieru-ha/v2
+          python3 -m py_compile maya3-backhaul1-only-safe.py test_maya3_backhaul1_only_safe.py
+          python3 test_maya3_backhaul1_only_safe.py
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("maya3-backhaul1-only-safe.py").read_text()
+          for expected in ('185.215.230.221','152.237.230.140','82.152.132.112','two-backhaul-3site-10m-v3','set server dual_egress/mieru state drain'):
+              assert expected in s
+          for forbidden in ('systemctl restart x-ui','systemctl restart dual-ha-v2-gateway','systemctl restart dual-ha-backhaul'):
+              assert forbidden not in s
+          print("MAYA3_EXCLUSIVE_BACKHAUL1_RESTRICTED_SCOPE=PASS")
+          PY
