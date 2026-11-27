@@ -1,0 +1,33 @@
+name: Maya1 Backhaul1-only safe drain
+on:
+  push:
+    branches: [dual-backhaul]
+    paths:
+      - 'dual-backhaul-mieru-ha/v2/maya1-backhaul1-only-safe.py'
+      - 'dual-backhaul-mieru-ha/v2/test_maya1_backhaul1_only_safe.py'
+      - '.github/workflows/maya1-backhaul1-only-safe.yml'
+  workflow_dispatch:
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate staged Maya1 single Backhaul routing
+        run: |
+          set -euo pipefail
+          cd dual-backhaul-mieru-ha/v2
+          python3 -m py_compile maya1-backhaul1-only-safe.py test_maya1_backhaul1_only_safe.py
+          python3 test_maya1_backhaul1_only_safe.py
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("maya1-backhaul1-only-safe.py").read_text()
+          for value in ('94.184.4.38','82.152.132.159','152.237.230.77',
+                        '21101','21102','two-backhaul-3site-10m-v3',
+                        'set server dual_egress/mieru state drain'):
+              assert value in s
+          for forbidden in ('systemctl restart x-ui','systemctl restart dual-ha-v2-gateway',
+                            'systemctl restart maya1-next'):
+              assert forbidden not in s
+          print("MAYA1_BH1_ONLY_SAFE_MODE=PASS")
+          PY
