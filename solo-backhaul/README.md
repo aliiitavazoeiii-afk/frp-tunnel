@@ -18,6 +18,25 @@
 
 NEVER issue a global pkill haproxy or disable every haproxy service. Preserve TLS, SNI, ALPN, WS paths, credentials, Backhaul binaries, Pool Guard and client REALITY settings.
 
+## Immutable tunnel transport guard
+
+To ensure Solo migration does not change the external WSS/TLS fingerprint,
+record the ORIGINAL active Maya1 Backhaul1 transport fingerprint BEFORE any
+cutover, then verify it AFTER the Xray outbound change. The fingerprint
+includes the running Backhaul, WSS router and TLS executable hashes, their
+systemd unit definitions, installed Backhaul binary, and staged Bh1 configs.
+It does not display secrets and does not inspect or modify the gateway.
+
+    sudo python3 /root/solo-transport-guard.py record
+    sudo python3 /root/solo-transport-guard.py verify
+
+The baseline is private, root-only and created once (exclusive creation).
+DO NOT replace it just to make a mismatch disappear. The foreign host's
+transport executable/config is NOT checked by this Maya1 guard; take an
+independent snapshot and compare on Foreign1. Files and executable hashes
+are strong guards against unexpected local changes, but are not proof that
+packet timing and filtering decisions cannot change.
+
 ## Phase 0: safe commands ON MAYA1 ONLY (94.184.4.38)
 
 Use an EXACT, verified commit in REF, not a moving branch:
