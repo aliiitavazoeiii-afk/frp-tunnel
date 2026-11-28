@@ -1,0 +1,25 @@
+name: Solo Backhaul offline safety checks
+
+on:
+  push:
+    branches: [solo-backhaul]
+    paths:
+      - 'solo-backhaul/**'
+      - '.github/workflows/solo-backhaul-ci.yml'
+  pull_request:
+    paths:
+      - 'solo-backhaul/**'
+      - '.github/workflows/solo-backhaul-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m compileall -q solo-backhaul
+      - name: Standalone offline tests
+        run: python3 -m unittest discover -s solo-backhaul -p 'test_*.py' -v
