@@ -115,7 +115,18 @@ def transition(old, success, *, now):
     route = previous.get("route", "primary")
     ensure(route in ("primary", "standby", "switch_requested", "switch_failed"),
            "Unknown persisted route")
-    consecutive = 0 if success else min(2, int(previous.get("failures", 0)) + 1)
+    # Prevent multiple --once calls or scheduler catch-ups from counting
+    # as two independent minute-spaced failures.
+    previous_time = previous.get("last_check_utc")
+    fresh_round = True
+    if previous_time:
+        try:
+            elapsed = (datetime.fromisoformat(now) - datetime.fromisoformat(previous_time)).total_seconds()
+            fresh_round = elapsed >= 55
+        except (ValueError, TypeError):
+            raise Guard("Invalid previous monitor timestamp")
+    consecutive = (0 if success else
+                   min(2, int(previous.get("failures", 0)) + int(fresh_round)))
     new = {**previous, "route": route, "failures": consecutive,
            "last_check_utc": now, "healthy": success}
     trigger = route == "primary" and not success and consecutive == 2
@@ -130,7 +141,7 @@ def valid_approval():
     st = MARKER.stat()
     return st.st_uid == 0 and st.st_mode & 0o077 == 0 and MARKER.read_text().strip() == "SOLO_STANDBY_TESTED_AND_APPROVED"
 
-def perform(node, old, observation, armed, now):
+def perform(node, old, observation, armed, now, persist=None):
     expected = node["standby_egress_ip"] if old.get("route") in ("standby", "switch_requested", "switch_failed") else node["primary_egress_ip"]
     good = observation == expected
     nxt, trigger = transition(old, good, now=now)
@@ -141,6 +152,10 @@ def perform(node, old, observation, armed, now):
         nxt["healthy"] = True
     if trigger:
         if armed:
+            # Durable latch BEFORE invoking a potentially non-idempotent
+            # remote action. A crash must not send the switch twice.
+            ensure(persist is not None, "Armed action requires state persistence")
+            persist(nxt)
             command = node.get("switch_command")
             if command is None:
                 nxt["route"] = "switch_failed"
@@ -175,10 +190,11 @@ def cycle(config, state, armed, now=None):
         name = node["id"]
         previous = state["nodes"].get(name, {})
         observation = probe(node["socks_port"])
-        current = perform(node, previous, observation, armed, now)
-        state["nodes"][name] = current
-        # Persist after each node: avoid repeating action after a crash.
-        write_state(state)
+        def persist(updated):
+            state["nodes"][name] = updated
+            write_state(state)
+        current = perform(node, previous, observation, armed, now, persist=persist)
+        persist(current)
     return state
 
 def main():
